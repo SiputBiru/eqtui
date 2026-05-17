@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Layout},
     style::{Color, Style},
     text::Line,
     widgets::{Block, Borders, List, ListItem, Paragraph},
-    Frame,
 };
 
 use crate::state::AppState;
@@ -11,23 +11,21 @@ use crate::state::AppState;
 pub fn render(frame: &mut Frame, state: &AppState) {
     let area = frame.area();
 
-    // Split into main area + status bar
     let [main_area, status_area] =
         Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
 
     let [list_area, info_area] =
         Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).areas(main_area);
 
-    // ---------- node list ----------
     let items: Vec<ListItem> = state
         .nodes
         .iter()
         .enumerate()
         .map(|(i, node)| {
             let icon = if node.class == "Audio/Sink" {
-                "\u{1f50a} " // 🔊 speaker
+                "\u{1f50a} "
             } else {
-                "\u{1f399}  " // 🎙 mic
+                "\u{1f399}  "
             };
             let label = format!("{icon}{node}");
             if i == state.selected {
@@ -38,15 +36,10 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         })
         .collect();
 
-    let list = List::new(items).block(
-        Block::default()
-            .title(" Devices ")
-            .borders(Borders::ALL),
-    );
+    let list = List::new(items).block(Block::default().title(" Devices ").borders(Borders::ALL));
 
     frame.render_widget(list, list_area);
 
-    // ---------- info panel ----------
     let info = if let Some(node) = state.nodes.get(state.selected) {
         vec![
             format!("  id:      {}", node.id),
@@ -61,7 +54,6 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         .block(Block::default().title(" Details ").borders(Borders::ALL));
     frame.render_widget(info_para, info_area);
 
-    // ---------- status bar ----------
     let pw_status = if state.pw_connected {
         "connected"
     } else {

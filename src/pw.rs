@@ -9,8 +9,6 @@ use pipewire::main_loop::MainLoopRc;
 
 use crate::state::{NodeInfo, PwCommand, PwEvent};
 
-/// Run the PipeWire event loop in the current (background) thread.
-/// Blocks until `PwCommand::Terminate` is received.
 pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>) {
     let mainloop = match MainLoopRc::new(None) {
         Ok(ml) => ml,
@@ -44,10 +42,8 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>) {
         }
     };
 
-    // Shared list of nodes, updated by registry callback
     let nodes: Rc<RefCell<Vec<NodeInfo>>> = Rc::new(RefCell::new(Vec::new()));
 
-    // ---------- registry listener ----------
     let nodes_reg = nodes.clone();
     let _reg_listener = registry
         .add_listener_local()
@@ -74,7 +70,6 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>) {
         })
         .register();
 
-    // ---------- timer: send initial snapshot ----------
     let tx_snapshot = tx.clone();
     let nodes_timer = nodes.clone();
     let timer = mainloop.loop_().add_timer(move |_| {
@@ -83,7 +78,6 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>) {
     });
     timer.update_timer(Some(Duration::from_millis(500)), None);
 
-    // ---------- channel: listen for commands from TUI ----------
     let mainloop_cmd = mainloop.clone();
     let _cmd_receiver = rx.attach(mainloop.loop_(), move |cmd| match cmd {
         PwCommand::Terminate => {
@@ -91,9 +85,7 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>) {
         }
     });
 
-    // ---------- signal connected ----------
     let _ = tx.send(PwEvent::Connected);
 
-    // ---------- run ----------
     mainloop.run();
 }
