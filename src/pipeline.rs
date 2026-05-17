@@ -44,3 +44,50 @@ impl Pipeline {
         self.bypass
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::FilterType;
+
+    #[test]
+    fn bypass_passthrough() {
+        let mut p = Pipeline::new(48000.0);
+        p.toggle_bypass();
+        assert!(p.is_bypassed());
+
+        let input = vec![0.7_f32; 64];
+        let mut lo = vec![0.0_f32; 64];
+        let mut ro = vec![0.0_f32; 64];
+        p.process(&input, &input, &mut lo, &mut ro);
+        assert_eq!(lo, input);
+    }
+
+    #[test]
+    fn process_with_eq_produces_finite_output() {
+        let p = Pipeline::new(48000.0);
+        let bands = vec![EqBand {
+            frequency: 500.0,
+            gain: 3.0,
+            q: 1.0,
+            filter_type: FilterType::Peak,
+        }];
+        p.set_bands(bands, 48000.0);
+
+        let input = vec![0.3_f32; 256];
+        let mut lo = vec![0.0_f32; 256];
+        let mut ro = vec![0.0_f32; 256];
+        p.process(&input, &input, &mut lo, &mut ro);
+        assert!(lo.iter().all(|s| s.is_finite()));
+    }
+
+    #[test]
+    fn toggle_bypass_roundtrip() {
+        let mut p = Pipeline::new(48000.0);
+        assert!(!p.is_bypassed());
+        p.toggle_bypass();
+        assert!(p.is_bypassed());
+        p.toggle_bypass();
+        assert!(!p.is_bypassed());
+    }
+}

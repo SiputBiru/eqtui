@@ -42,11 +42,132 @@ impl Equalizer {
             .iter()
             .map(|b| biquad_coefficients(b, sample_rate))
             .collect();
-
         let len = coeffs.len();
         *self.bands.write().unwrap() = coeffs;
         *self.states_l.write().unwrap() = vec![BiquadState::default(); len];
         *self.states_r.write().unwrap() = vec![BiquadState::default(); len];
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rms(samples: &[f32]) -> f32 {
+        let sum_sq: f32 = samples.iter().map(|s| s * s).sum();
+        (sum_sq / samples.len() as f32).sqrt()
+    }
+
+    #[test]
+    fn passthrough_bypassed() {
+        let eq = Equalizer::new(48000.0);
+        eq.set_bypass(true);
+        let input = vec![0.5_f32; 128];
+        let mut lo = vec![0.0_f32; 128];
+        let mut ro = vec![0.0_f32; 128];
+        eq.process(&input, &input, &mut lo, &mut ro);
+        assert_eq!(lo, input);
+        assert_eq!(ro, input);
+    }
+
+    #[test]
+    fn passthrough_no_bands() {
+        let eq = Equalizer::new(48000.0);
+        let input = vec![0.5_f32; 128];
+        let mut lo = vec![0.0_f32; 128];
+        let mut ro = vec![0.0_f32; 128];
+        eq.process(&input, &input, &mut lo, &mut ro);
+        assert_eq!(lo, input);
+    }
+
+    #[test]
+    fn unity_gain_peak() {
+        let eq = Equalizer::new(48000.0);
+        eq.set_bands(
+            &[EqBand { frequency: 1000.0, gain: 0.0, q: 1.0, filter_type: FilterType::Peak }],
+            48000.0,
+        );
+        let n = 1024;
+        let input = vec![0.5_f32; n];
+        let mut lo = vec![0.0_f32; n];
+        let mut ro = vec![0.0_f32; n];
+        eq.process(&input, &input, &mut lo, &mut ro);
+        assert!((rms(&input) - rms(&lo)).abs() < 0.1);
+    }
+
+    #[test]
+    fn positive_gain_boosts() {
+        let eq = Equalizer::new(48000.0);
+        eq.set_bands(
+            &[EqBand { frequency: 1000.0, gain: 6.0, q: 1.0, filter_type: FilterType::Peak }],
+            48000.0,
+        );
+        let n = 4096;
+        let freq = 1000.0;
+        let sr = 48000.0;
+        let input: Vec<f32> = (0..n)
+            .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / sr).sin())
+            .collect();
+        let mut lo = vec![0.0_f32; n];
+        let mut ro = vec![0.0_f32; n];
+        eq.process(&input, &input, &mut lo, &mut ro);
+        assert!(rms(&lo) > rms(&input) * 1.3, "expected boost, out_rms={:.3}", rms(&lo));
+    }
+
+    #[test]
+    fn negative_gain_cuts() {
+        let eq = Equalizer::new(48000.0);
+        eq.set_bands(
+            &[EqBand { frequency: 1000.0, gain: -6.0, q: 1.0, filter_type: FilterType::Peak }],
+            48000.0,
+        );
+        let n = 4096;
+        let freq = 1000.0;
+        let sr = 48000.0;
+        let input: Vec<f32> = (0..n)
+            .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / sr).sin())
+            .collect();
+        let mut lo = vec![0.0_f32; n];
+        let mut ro = vec![0.0_f32; n];
+        eq.process(&input, &input, &mut lo, &mut ro);
+        assert!(rms(&lo) < rms(&input) * 0.7, "expected cut, out_rms={:.3}", rms(&lo));
+    }
+
+    #[test]
+    fn multiple_bands_chain() {
+        let eq = Equalizer::new(48000.0);
+        let bands = vec![
+            EqBand { frequency: 100.0, gain: 3.0, q: 1.0, filter_type: FilterType::LowShelf },
+            EqBand { frequency: 1000.0, gain: -4.0, q: 1.0, filter_type: FilterType::Peak },
+            EqBand { frequency: 8000.0, gain: 2.0, q: 0.7, filter_type: FilterType::HighShelf },
+        ];
+        eq.set_bands(&bands, 48000.0);
+        let n = 512;
+        let input = vec![0.3_f32; n];
+        let mut lo = vec![0.0_f32; n];
+        let mut ro = vec![0.0_f32; n];
+        eq.process(&input, &input, &mut lo, &mut ro);
+        // Output should exist and not panic
+        assert!(lo.iter().all(|s| s.is_finite()));
+    }
+
+    #[test]
+    fn low_shelf_boosts_bass() {
+        let eq = Equalizer::new(48000.0);
+        eq.set_bands(
+            &[EqBand { frequency: 200.0, gain: 6.0, q: 0.71, filter_type: FilterType::LowShelf }],
+            48000.0,
+        );
+        let n = 4096;
+        let freq = 50.0;
+        let sr = 48000.0;
+        let input: Vec<f32> = (0..n)
+            .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / sr).sin())
+            .collect();
+        let mut lo = vec![0.0_f32; n];
+        let mut ro = vec![0.0_f32; n];
+        eq.process(&input, &input, &mut lo, &mut ro);
+        assert!(rms(&lo) > 1.3, "low shelf should boost bass, got {:.3}", rms(&lo));
     }
 }
 
@@ -115,7 +236,7 @@ impl EffectPlugin for Equalizer {
         *self.bypass.read().unwrap()
     }
 
-    fn set_bypass(&mut self, bypass: bool) {
+    fn set_bypass(&self, bypass: bool) {
         *self.bypass.write().unwrap() = bypass;
     }
 
@@ -141,17 +262,16 @@ fn biquad_coefficients(band: &EqBand, sample_rate: f32) -> BiquadCoeffs {
 
     let (b0, b1, b2, a1, a2) = match band.filter_type {
         FilterType::Peak => {
-            let a = 1.0 + alpha / gain_linear;
-            let b = 1.0 + alpha * gain_linear;
-            let b_inv = 1.0 / b;
+            let a0 = 1.0 + alpha / gain_linear;
+            let a0_inv = 1.0 / a0;
 
-            let b0 = (1.0 + alpha * gain_linear) * b_inv;
-            let b1 = (-2.0 * cos_w0) / b;
-            let b2 = (1.0 - alpha * gain_linear) / b;
-            let a1 = (2.0 * cos_w0) / a;
-            let a2 = -(1.0 - alpha / gain_linear) / a;
+            let b0 = (1.0 + alpha * gain_linear) * a0_inv;
+            let b1 = (-2.0 * cos_w0) * a0_inv;
+            let b2 = (1.0 - alpha * gain_linear) * a0_inv;
+            let a1 = (-2.0 * cos_w0) * a0_inv;
+            let a2 = (1.0 - alpha / gain_linear) * a0_inv;
 
-            (b0, b1, b2, -a1, -a2)
+            (b0, b1, b2, a1, a2)
         }
         FilterType::LowShelf => {
             let a = gain_linear + 1.0;
@@ -167,7 +287,7 @@ fn biquad_coefficients(band: &EqBand, sample_rate: f32) -> BiquadCoeffs {
             let a1 = -2.0 * (b + a * cos_w0) * a0_inv;
             let a2 = (a + b * cos_w0 - c) * a0_inv;
 
-            (b0, b1, b2, -a1, -a2)
+            (b0, b1, b2, a1, a2)
         }
         FilterType::HighShelf => {
             let a = gain_linear + 1.0;
@@ -183,7 +303,7 @@ fn biquad_coefficients(band: &EqBand, sample_rate: f32) -> BiquadCoeffs {
             let a1 = 2.0 * (b - a * cos_w0) * a0_inv;
             let a2 = (a - b * cos_w0 - c) * a0_inv;
 
-            (b0, b1, b2, -a1, -a2)
+            (b0, b1, b2, a1, a2)
         }
     };
 
