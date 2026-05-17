@@ -13,7 +13,6 @@ use crate::pipeline::Pipeline;
 use crate::pw_filter_ffi;
 use crate::state::{NodeInfo, PwCommand, PwEvent};
 
-const DEFAULT_SAMPLE_RATE: f32 = 48000.0;
 const DEFAULT_N_SAMPLES: u32 = 1024;
 
 struct FilterData {
@@ -56,7 +55,7 @@ unsafe extern "C" fn state_changed_cb(
     let _ = data;
 }
 
-pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>) {
+pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pipeline>) {
     let mainloop = match MainLoopRc::new(None) {
         Ok(ml) => ml,
         Err(e) => {
@@ -126,8 +125,6 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>) {
     timer.update_timer(Some(Duration::from_millis(500)), None);
 
     // --- filter setup ---
-
-    let pipeline = Arc::new(Pipeline::new(DEFAULT_SAMPLE_RATE));
 
     let filter = unsafe {
         pw_filter_ffi::filter_new(

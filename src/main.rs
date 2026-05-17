@@ -6,6 +6,7 @@ use eqtui::{
     config::Config,
     event::EventHandler,
     handler,
+    pipeline::Pipeline,
     state::{PwCommand, PwEvent},
     tui::Tui,
     AppResult,
@@ -16,12 +17,14 @@ fn main() -> AppResult<()> {
     color_eyre::install()?;
 
     let config = Arc::new(Config::new(None));
+    let pipeline = Arc::new(Pipeline::new(48000.0));
 
     let (to_tui, from_pw) = mpsc::channel::<PwEvent>();
     let (to_pw, from_tui) = pipewire::channel::channel::<PwCommand>();
 
+    let pipeline_pw = pipeline.clone();
     let pw_handle = std::thread::spawn(move || {
-        eqtui::pw::run(to_tui, from_tui);
+        eqtui::pw::run(to_tui, from_tui, pipeline_pw);
     });
 
     let backend = CrosstermBackend::new(std::io::stdout());
@@ -31,7 +34,7 @@ fn main() -> AppResult<()> {
 
     tui.init()?;
 
-    let mut app = App::new(config);
+    let mut app = App::new(config, pipeline);
 
     while app.running {
         while let Ok(event) = from_pw.try_recv() {
@@ -44,7 +47,7 @@ fn main() -> AppResult<()> {
             eqtui::event::Event::Resize(_, _) => {}
         }
 
-        tui.draw(|frame| render(frame, &app))?;
+        tui.draw(|frame| eqtui::tui::render(&app, frame))?;
     }
 
     tui.exit()?;
@@ -53,75 +56,4 @@ fn main() -> AppResult<()> {
     pw_handle.join().ok();
 
     Ok(())
-}
-
-fn render(frame: &mut ratatui::Frame, app: &App) {
-    use ratatui::layout::{Constraint, Layout};
-    use ratatui::style::{Color, Style};
-    use ratatui::text::Line;
-    use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
-
-    let area = frame.area();
-
-    let [main_area, status_area] =
-        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
-
-    let [list_area, info_area] =
-        Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).areas(main_area);
-
-    let items: Vec<ListItem> = app
-        .nodes
-        .iter()
-        .enumerate()
-        .map(|(i, node)| {
-            let icon = if node.class == "Audio/Sink" {
-                "\u{1f50a} "
-            } else {
-                "\u{1f399}  "
-            };
-            let label = format!("{icon}{node}");
-            if i == app.nodes_selected {
-                ListItem::new(label).style(Style::default().fg(Color::Yellow))
-            } else {
-                ListItem::new(label)
-            }
-        })
-        .collect();
-
-    let list = List::new(items).block(Block::default().title(" Devices ").borders(Borders::ALL));
-    frame.render_widget(list, list_area);
-
-    let info = if let Some(node) = app.nodes.get(app.nodes_selected) {
-        vec![
-            format!("  id:      {}", node.id),
-            format!("  name:    {}", node.name),
-            format!("  class:   {}", node.class_label()),
-        ]
-    } else {
-        vec!["(no devices)".into()]
-    };
-
-    let info_para = Paragraph::new(info.join("\n"))
-        .block(Block::default().title(" Details ").borders(Borders::ALL));
-    frame.render_widget(info_para, info_area);
-
-    let pw_status = if app.pw_connected {
-        "connected"
-    } else {
-        "disconnected"
-    };
-    let nodes_count = app.nodes.len();
-    let mode_label = match app.mode {
-        eqtui::app::Mode::Normal => "NORMAL",
-        eqtui::app::Mode::Insert => "INSERT",
-        eqtui::app::Mode::Visual => "VISUAL",
-        eqtui::app::Mode::Command => "COMMAND",
-    };
-    let status_text = format!(
-        " PW: {}  |  nodes: {}  |  {}  |  q:quit",
-        pw_status, nodes_count, mode_label
-    );
-    let status = Paragraph::new(Line::from(status_text))
-        .style(Style::default().fg(Color::Gray).bg(Color::DarkGray));
-    frame.render_widget(status, status_area);
 }

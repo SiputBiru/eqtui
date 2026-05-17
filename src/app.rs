@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use crate::config::Config;
-use crate::state::{NodeInfo, PwEvent};
+use crate::pipeline::Pipeline;
+use crate::state::{EqBand, NodeInfo, PwEvent};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FocusedBlock {
@@ -27,10 +28,15 @@ pub struct App {
     pub nodes_selected: usize,
     pub pw_connected: bool,
     pub command_input: String,
+    pub eq_bands: Vec<EqBand>,
+    pub eq_band_selected: usize,
+    pub eq_bypass: bool,
+    pub last_key: Option<char>,
+    pub pipeline: Arc<Pipeline>,
 }
 
 impl App {
-    pub fn new(config: Arc<Config>) -> Self {
+    pub fn new(config: Arc<Config>, pipeline: Arc<Pipeline>) -> Self {
         Self {
             running: true,
             config,
@@ -40,6 +46,11 @@ impl App {
             nodes_selected: 0,
             pw_connected: false,
             command_input: String::new(),
+            eq_bands: Vec::new(),
+            eq_band_selected: 0,
+            eq_bypass: false,
+            last_key: None,
+            pipeline,
         }
     }
 
@@ -73,5 +84,10 @@ impl App {
 
     pub fn quit(&mut self) {
         self.running = false;
+    }
+
+    pub fn sync_bands(&self) {
+        self.pipeline
+            .set_bands(self.eq_bands.clone(), 48000.0);
     }
 }

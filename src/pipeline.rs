@@ -1,17 +1,19 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use crate::effects::equalizer::Equalizer;
 use crate::effects::EffectPlugin;
 use crate::state::EqBand;
 
 pub struct Pipeline {
     eq: Equalizer,
-    bypass: bool,
+    bypass: AtomicBool,
 }
 
 impl Pipeline {
     pub fn new(sample_rate: f32) -> Self {
         Self {
             eq: Equalizer::new(sample_rate),
-            bypass: false,
+            bypass: AtomicBool::new(false),
         }
     }
 
@@ -22,7 +24,7 @@ impl Pipeline {
         left_out: &mut [f32],
         right_out: &mut [f32],
     ) {
-        if self.bypass {
+        if self.bypass.load(Ordering::Relaxed) {
             let n = left_in.len().min(left_out.len());
             left_out[..n].copy_from_slice(&left_in[..n]);
             right_out[..n].copy_from_slice(&right_in[..n]);
@@ -36,12 +38,12 @@ impl Pipeline {
         self.eq.set_bands(&bands, sample_rate);
     }
 
-    pub fn toggle_bypass(&mut self) {
-        self.bypass = !self.bypass;
+    pub fn set_bypass(&self, bypass: bool) {
+        self.bypass.store(bypass, Ordering::Relaxed);
     }
 
     pub fn is_bypassed(&self) -> bool {
-        self.bypass
+        self.bypass.load(Ordering::Relaxed)
     }
 }
 
@@ -52,8 +54,8 @@ mod tests {
 
     #[test]
     fn bypass_passthrough() {
-        let mut p = Pipeline::new(48000.0);
-        p.toggle_bypass();
+        let p = Pipeline::new(48000.0);
+        p.set_bypass(true);
         assert!(p.is_bypassed());
 
         let input = vec![0.7_f32; 64];
@@ -82,12 +84,12 @@ mod tests {
     }
 
     #[test]
-    fn toggle_bypass_roundtrip() {
-        let mut p = Pipeline::new(48000.0);
+    fn set_bypass_roundtrip() {
+        let p = Pipeline::new(48000.0);
         assert!(!p.is_bypassed());
-        p.toggle_bypass();
+        p.set_bypass(true);
         assert!(p.is_bypassed());
-        p.toggle_bypass();
+        p.set_bypass(false);
         assert!(!p.is_bypassed());
     }
 }
