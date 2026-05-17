@@ -75,26 +75,29 @@ impl App {
     pub fn tick(&mut self) {
         let (mut new_l, mut new_r) = self.pipeline.peaks();
 
-        // Convert to dB
-        new_l = 20.0 * new_l.log10();
-        new_r = 20.0 * new_r.log10();
+        // Prevent log10(0) by adding a tiny epsilon
+        new_l = 20.0 * (new_l + 1e-7).log10();
+        new_r = 20.0 * (new_r + 1e-7).log10();
 
         // Clamp to a reasonable range (e.g., -60dB to 0dB)
         new_l = new_l.clamp(-60.0, 0.0);
         new_r = new_r.clamp(-60.0, 0.0);
 
-        // Decay logic (falloff)
+        // Professional decay speed (approx 24dB/sec at 30fps)
+        let decay_speed = 0.8;
+
         if new_l < self.peak_l {
-            self.peak_l -= 2.0; // Decay speed
+            self.peak_l -= decay_speed;
             if self.peak_l < -60.0 {
                 self.peak_l = -60.0;
             }
         } else {
+            // Instant attack (snap to higher peak)
             self.peak_l = new_l;
         }
 
         if new_r < self.peak_r {
-            self.peak_r -= 2.0;
+            self.peak_r -= decay_speed;
             if self.peak_r < -60.0 {
                 self.peak_r = -60.0;
             }
