@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use tui_input::Input;
+
 use crate::config::Config;
 use crate::pipeline::Pipeline;
 use crate::state::{EqBand, NodeInfo, PwEvent};
@@ -30,6 +32,8 @@ pub struct App {
     pub command_input: String,
     pub eq_bands: Vec<EqBand>,
     pub eq_band_selected: usize,
+    pub eq_column_selected: usize,
+    pub cell_input: Input,
     pub eq_bypass: bool,
     pub last_key: Option<char>,
     pub pipeline: Arc<Pipeline>,
@@ -48,6 +52,8 @@ impl App {
             command_input: String::new(),
             eq_bands: Vec::new(),
             eq_band_selected: 0,
+            eq_column_selected: 1,
+            cell_input: Input::default(),
             eq_bypass: false,
             last_key: None,
             pipeline,
@@ -89,5 +95,24 @@ impl App {
     pub fn sync_bands(&self) {
         self.pipeline
             .set_bands(self.eq_bands.clone(), 48000.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_app_initialization() {
+        let config = Arc::new(Config::default());
+        let pipeline = Arc::new(Pipeline::new(48000.0));
+        let app = App::new(config, pipeline);
+
+        assert!(app.running);
+        assert_eq!(app.eq_band_selected, 0);
+        assert_eq!(app.eq_column_selected, 1);
+        assert_eq!(app.cell_input.value(), "");
+        assert!(!app.eq_bypass);
     }
 }

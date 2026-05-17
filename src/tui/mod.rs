@@ -4,13 +4,13 @@ use std::panic;
 use crossterm::cursor;
 use crossterm::event::DisableMouseCapture;
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
+use ratatui::Terminal;
 use ratatui::backend::Backend;
 use ratatui::layout::{Constraint, Layout};
-use ratatui::Terminal;
 
+use crate::AppResult;
 use crate::app::{App, FocusedBlock};
 use crate::event::EventHandler;
-use crate::AppResult;
 
 pub mod devices;
 pub mod eq_table;
@@ -67,8 +67,17 @@ where
 pub fn render(app: &App, frame: &mut ratatui::Frame) {
     let area = frame.area();
 
+    // Add margin and max width
+    let [_, centered_area, _] = Layout::horizontal([
+        Constraint::Fill(1),
+        Constraint::Max(250),
+        Constraint::Fill(1),
+    ])
+    .margin(1)
+    .areas(area);
+
     let [main_area, status_area] =
-        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
+        Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(centered_area);
 
     match app.focused_block {
         FocusedBlock::Devices => {
@@ -76,7 +85,7 @@ pub fn render(app: &App, frame: &mut ratatui::Frame) {
         }
         FocusedBlock::Pipeline => {
             let [top, bottom] =
-                Layout::vertical([Constraint::Length(8), Constraint::Min(1)]).areas(main_area);
+                Layout::vertical([Constraint::Length(10), Constraint::Fill(1)]).areas(main_area);
             devices::render(app, frame, top);
             eq_table::render(app, frame, bottom);
         }

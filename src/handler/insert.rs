@@ -1,6 +1,8 @@
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{Event, KeyCode, KeyEvent};
+use tui_input::backend::crossterm::EventHandler;
 
 use crate::app::{App, FocusedBlock, Mode};
+use crate::state::FilterType;
 
 pub fn handle(key: KeyEvent, app: &mut App) {
     if app.focused_block != FocusedBlock::Pipeline {
@@ -13,24 +15,147 @@ pub fn handle(key: KeyEvent, app: &mut App) {
             app.mode = Mode::Normal;
         }
         KeyCode::Enter => {
+            if !app.eq_bands.is_empty() {
+                let val_str = app.cell_input.value();
+                let b = &mut app.eq_bands[app.eq_band_selected];
+
+                match app.eq_column_selected {
+                    1 => {
+                        if let Ok(v) = val_str.parse::<f32>() {
+                            b.frequency = v.clamp(20.0, 20000.0);
+                        }
+                    }
+                    2 => {
+                        if let Ok(v) = val_str.parse::<f32>() {
+                            b.gain = v.clamp(-30.0, 30.0);
+                        }
+                    }
+                    3 => {
+                        if let Ok(v) = val_str.parse::<f32>() {
+                            b.q = v.clamp(0.1, 10.0);
+                        }
+                    }
+                    4 => {
+                        let upper = val_str.to_uppercase();
+                        if upper == "PK" || upper == "PEAK" {
+                            b.filter_type = FilterType::Peak;
+                        } else if upper == "LS" || upper == "LOWSHELF" {
+                            b.filter_type = FilterType::LowShelf;
+                        } else if upper == "HS" || upper == "HIGHSHELF" {
+                            b.filter_type = FilterType::HighShelf;
+                        }
+                    }
+                    _ => {}
+                }
+                app.sync_bands();
+            }
             app.mode = Mode::Normal;
         }
-        KeyCode::Char('+') | KeyCode::Char('=') => {
-            if app.eq_bands.is_empty() {
-                return;
-            }
-            let b = &mut app.eq_bands[app.eq_band_selected];
-            b.gain += 0.5;
-            app.sync_bands();
+        _ => {
+            app.cell_input.handle_event(&Event::Key(key));
         }
-        KeyCode::Char('-') => {
-            if app.eq_bands.is_empty() {
-                return;
-            }
-            let b = &mut app.eq_bands[app.eq_band_selected];
-            b.gain -= 0.5;
-            app.sync_bands();
-        }
-        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::FocusedBlock;
+    use crate::config::Config;
+    use crate::pipeline::Pipeline;
+    use crate::state::EqBand;
+    use crossterm::event::{KeyEvent, KeyModifiers};
+    use std::sync::Arc;
+    use tui_input::Input;
+
+    fn setup_app() -> App {
+        let config = Arc::new(Config::default());
+        let pipeline = Arc::new(Pipeline::new(48000.0));
+        let mut app = App::new(config, pipeline);
+        app.focused_block = FocusedBlock::Pipeline;
+        app.mode = Mode::Insert;
+        app.eq_bands.push(EqBand {
+            frequency: 1000.0,
+            gain: 0.0,
+            q: 1.0,
+            filter_type: FilterType::Peak,
+        });
+        app
+    }
+
+    #[test]
+    fn test_handle_insert_mode_typing() {
+        let mut app = setup_app();
+        app.eq_column_selected = 1;
+        app.cell_input = Input::new("123".to_string());
+
+        let key = KeyEvent::new(KeyCode::Char('4'), KeyModifiers::NONE);
+        handle(key, &mut app);
+        assert_eq!(app.cell_input.value(), "1234");
+    }
+
+    #[test]
+    fn test_handle_commit_frequency() {
+        let mut app = setup_app();
+        app.eq_column_selected = 1;
+        app.cell_input = Input::new("500".to_string());
+
+        let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        handle(key, &mut app);
+        assert_eq!(app.eq_bands[0].frequency, 500.0);
+        assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn test_handle_commit_gain() {
+        let mut app = setup_app();
+        app.eq_column_selected = 2;
+        app.cell_input = Input::new("-10.5".to_string());
+
+        let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        handle(key, &mut app);
+        assert_eq!(app.eq_bands[0].gain, -10.5);
+    }
+
+    #[test]
+    fn test_handle_commit_q() {
+        let mut app = setup_app();
+        app.eq_column_selected = 3;
+        app.cell_input = Input::new("2.5".to_string());
+
+        let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        handle(key, &mut app);
+        assert_eq!(app.eq_bands[0].q, 2.5);
+    }
+
+    #[test]
+    fn test_handle_commit_filter_type() {
+        let mut app = setup_app();
+        app.eq_column_selected = 4;
+
+        app.cell_input = Input::new("ls".to_string());
+        let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        handle(key, &mut app);
+        assert!(matches!(app.eq_bands[0].filter_type, FilterType::LowShelf));
+
+        app.mode = Mode::Insert;
+        app.cell_input = Input::new("HS".to_string());
+        let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        handle(key, &mut app);
+        assert!(matches!(app.eq_bands[0].filter_type, FilterType::HighShelf));
+
+        app.mode = Mode::Insert;
+        app.cell_input = Input::new("peak".to_string());
+        let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        handle(key, &mut app);
+        assert!(matches!(app.eq_bands[0].filter_type, FilterType::Peak));
+    }
+
+    #[test]
+    fn test_handle_esc() {
+        let mut app = setup_app();
+        let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        handle(key, &mut app);
+        assert_eq!(app.mode, Mode::Normal);
     }
 }

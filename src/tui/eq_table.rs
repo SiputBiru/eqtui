@@ -1,7 +1,7 @@
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Color, Style};
-use ratatui::widgets::{Block, Borders, Cell, Row, Table, TableState};
-use ratatui::Frame;
+use ratatui::widgets::{Block, BorderType, Borders, Cell, Row, Table, TableState};
 
 use crate::app::{App, FocusedBlock, Mode};
 use crate::state::FilterType;
@@ -10,8 +10,15 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
     let bands = &app.eq_bands;
     let selected = app.eq_band_selected;
 
+    let is_focused = matches!(app.focused_block, FocusedBlock::Pipeline);
+
     let header = Row::new(["#", "Frequency", "Gain", "Q", "Type"])
-        .style(Style::default().fg(Color::Yellow));
+        .style(if is_focused {
+            Style::default().fg(Color::Yellow).bold()
+        } else {
+            Style::default().fg(Color::Yellow)
+        })
+        .bottom_margin(1); // Add breathing room
 
     let rows: Vec<Row> = bands
         .iter()
@@ -29,13 +36,46 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
                 FilterType::LowShelf => "LS",
                 FilterType::HighShelf => "HS",
             };
-            Row::new(vec![
+
+            let is_editing = is_focused && app.mode == Mode::Insert && i == selected;
+
+            let mut cells = vec![
                 Cell::new(format!("{}", i + 1)),
-                Cell::new(freq),
-                Cell::new(gain),
-                Cell::new(q),
-                Cell::new(ftype),
-            ])
+                Cell::new(if is_editing && app.eq_column_selected == 1 {
+                    format!("{}█", app.cell_input.value())
+                } else {
+                    freq
+                }),
+                Cell::new(if is_editing && app.eq_column_selected == 2 {
+                    format!("{}█", app.cell_input.value())
+                } else {
+                    gain
+                }),
+                Cell::new(if is_editing && app.eq_column_selected == 3 {
+                    format!("{}█", app.cell_input.value())
+                } else {
+                    q
+                }),
+                Cell::new(if is_editing && app.eq_column_selected == 4 {
+                    format!("{}█", app.cell_input.value())
+                } else {
+                    ftype.to_string()
+                }),
+            ];
+
+            if i == selected && is_focused {
+                let col = app.eq_column_selected;
+                if col < cells.len() {
+                    let style = if app.mode == Mode::Insert {
+                        Style::default().fg(Color::Black).bg(Color::Cyan)
+                    } else {
+                        Style::default().fg(Color::Black).bg(Color::Yellow)
+                    };
+                    cells[col] = cells[col].clone().style(style);
+                }
+            }
+
+            Row::new(cells)
         })
         .collect();
 
@@ -47,23 +87,26 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
         Constraint::Length(6),
     ];
 
-    let is_focused = matches!(app.focused_block, FocusedBlock::Pipeline);
-    let is_normal = app.mode == Mode::Normal;
-
-    let highlight = if is_focused && is_normal {
-        Style::default().fg(Color::Black).bg(Color::Yellow)
-    } else {
-        Style::default()
-    };
-
-    let table = Table::new(rows, widths)
-        .header(header)
-        .block(
-            Block::default()
-                .title(" Equalizer ")
-                .borders(Borders::ALL),
-        )
-        .row_highlight_style(highlight);
+    let table = Table::new(rows, widths).header(header).block(
+        Block::default()
+            .title(" Equalizer ")
+            .title_style(if is_focused {
+                Style::default().bold()
+            } else {
+                Style::default()
+            })
+            .borders(Borders::ALL)
+            .border_type(if is_focused {
+                BorderType::Thick
+            } else {
+                BorderType::Plain
+            })
+            .border_style(if is_focused {
+                Style::default().fg(Color::Green)
+            } else {
+                Style::default()
+            }),
+    );
 
     let mut state = TableState::default().with_selected(selected);
     frame.render_stateful_widget(table, area, &mut state);

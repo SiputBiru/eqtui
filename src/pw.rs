@@ -8,11 +8,14 @@ use std::time::Duration;
 use pipewire::channel::Receiver;
 use pipewire::context::ContextRc;
 use pipewire::main_loop::MainLoopRc;
+use pipewire::spa;
 
 use crate::pipeline::Pipeline;
 use crate::pw_filter_ffi;
-use crate::state::{NodeInfo, PwCommand, PwEvent};
+use crate::state::{DeviceClass, NodeInfo, PwCommand, PwEvent};
 
+const DEFAULT_SAMPLE_RATE: u32 = 48000;
+const DEFAULT_CHANNELS: u32 = 2;
 const DEFAULT_N_SAMPLES: u32 = 1024;
 
 struct FilterData {
@@ -45,14 +48,32 @@ unsafe extern "C" fn process_cb(data: *mut c_void, _position: *mut pw_filter_ffi
 
 unsafe extern "C" fn state_changed_cb(
     data: *mut c_void,
-    _old: pw_filter_ffi::pw_filter_state,
+    old: pw_filter_ffi::pw_filter_state,
     new: pw_filter_ffi::pw_filter_state,
     _error: *const std::os::raw::c_char,
 ) {
-    if new == pw_filter_ffi::PW_FILTER_STATE_ERROR {
-        eprintln!("[eqtui] pw_filter entered error state");
-    }
+    eprintln!(
+        "[eqtui] filter: {} -> {}",
+        state_name_for(old),
+        state_name_for(new)
+    );
     let _ = data;
+}
+
+fn state_name_for(s: pw_filter_ffi::pw_filter_state) -> &'static str {
+    if s == pw_filter_ffi::PW_FILTER_STATE_UNCONNECTED {
+        "UNCONNECTED"
+    } else if s == pw_filter_ffi::PW_FILTER_STATE_CONNECTING {
+        "CONNECTING"
+    } else if s == pw_filter_ffi::PW_FILTER_STATE_PAUSED {
+        "PAUSED"
+    } else if s == pw_filter_ffi::PW_FILTER_STATE_STREAMING {
+        "STREAMING"
+    } else if s == pw_filter_ffi::PW_FILTER_STATE_ERROR {
+        "ERROR"
+    } else {
+        "?"
+    }
 }
 
 pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pipeline>) {
@@ -105,11 +126,24 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
                         .get(&*pipewire::keys::NODE_DESCRIPTION)
                         .unwrap_or("")
                         .to_string();
+
+                    let device_class = if class == "Audio/Source" {
+                        DeviceClass::Input
+                    } else if name.to_lowercase().contains("headphone")
+                        || name.to_lowercase().contains("headset")
+                        || description.to_lowercase().contains("headphone")
+                        || description.to_lowercase().contains("headset")
+                    {
+                        DeviceClass::Headphone
+                    } else {
+                        DeviceClass::Speaker
+                    };
+
                     nodes_reg.borrow_mut().push(NodeInfo {
                         id: global.id,
                         name,
                         description,
-                        class: class.to_string(),
+                        class: device_class,
                     });
                 }
             }
@@ -210,12 +244,44 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
         );
     }
 
+    let mut audio_info = spa::param::audio::AudioInfoRaw::new();
+    audio_info.set_format(spa::param::audio::AudioFormat::F32LE);
+    audio_info.set_rate(DEFAULT_SAMPLE_RATE);
+    audio_info.set_channels(DEFAULT_CHANNELS);
+    let mut position = [0u32; spa::param::audio::MAX_CHANNELS];
+    position[0] = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+    position[1] = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+    audio_info.set_position(position);
+
+    let values: Vec<u8> = spa::pod::serialize::PodSerializer::serialize(
+        std::io::Cursor::new(Vec::new()),
+        &spa::pod::Value::Object(spa::pod::Object {
+            type_: libspa_sys::SPA_TYPE_OBJECT_Format,
+            id: libspa_sys::SPA_PARAM_EnumFormat,
+            properties: audio_info.into(),
+        }),
+    )
+    .unwrap()
+    .0
+    .into_inner();
+
+    let pod_ref = match spa::pod::Pod::from_bytes(&values) {
+        Some(p) => p,
+        None => {
+            let _ = tx.send(PwEvent::Error("pod from_bytes failed".into()));
+            return;
+        }
+    };
+
+    let pod_ptr = pod_ref as *const spa::pod::Pod as *const libspa_sys::spa_pod;
+    let mut params = [pod_ptr];
+
     let ret = unsafe {
         pw_filter_ffi::filter_connect(
             filter,
             pw_filter_ffi::PW_FILTER_FLAG_RT_PROCESS,
-            std::ptr::null_mut(),
-            0,
+            params.as_mut_ptr(),
+            1,
         )
     };
 

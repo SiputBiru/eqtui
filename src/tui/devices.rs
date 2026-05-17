@@ -1,51 +1,68 @@
-use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Style};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 use ratatui::Frame;
+use ratatui::layout::{Constraint, Rect};
+use ratatui::style::{Color, Style};
+use ratatui::widgets::{Block, BorderType, Borders, Cell, Row, Table, TableState};
 
-use crate::app::App;
+use crate::app::{App, FocusedBlock};
 
 pub fn render(app: &App, frame: &mut Frame, area: Rect) {
-    let [list_area, info_area] =
-        Layout::vertical([Constraint::Min(1), Constraint::Length(4)]).areas(area);
+    let is_focused = app.focused_block == FocusedBlock::Devices;
 
-    let items: Vec<ListItem> = app
+    let header = Row::new(["Class", "Name", "ID"])
+        .style(if is_focused {
+            Style::default().fg(Color::Yellow).bold()
+        } else {
+            Style::default()
+        })
+        .bottom_margin(1);
+
+    let rows: Vec<Row> = app
         .nodes
         .iter()
-        .enumerate()
-        .map(|(i, node)| {
-            let icon = if node.class == "Audio/Sink" {
-                "\u{1f50a} "
-            } else {
-                "\u{1f399}  "
-            };
-            let label = format!("{icon}{node}");
-            if i == app.nodes_selected {
-                ListItem::new(label).style(Style::default().fg(Color::Yellow))
-            } else {
-                ListItem::new(label)
-            }
+        .map(|node| {
+            let icon = node.class.icon();
+            Row::new(vec![
+                Cell::new(icon),
+                Cell::new(node.to_string()),
+                Cell::new(node.id.to_string()),
+            ])
         })
         .collect();
 
-    let list = List::new(items).block(
-        Block::default()
-            .title(" Devices ")
-            .borders(Borders::ALL),
-    );
-    frame.render_widget(list, list_area);
+    let widths = [
+        Constraint::Length(5),
+        Constraint::Fill(1),
+        Constraint::Length(8),
+    ];
 
-    let info = if let Some(node) = app.nodes.get(app.nodes_selected) {
-        vec![
-            format!("  id:      {}", node.id),
-            format!("  name:    {}", node.name),
-            format!("  class:   {}", node.class_label()),
-        ]
-    } else {
-        vec!["(no devices)".into()]
-    };
+    let table = Table::new(rows, widths)
+        .header(header)
+        .block(
+            Block::default()
+                .title(" Devices ")
+                .title_style(if is_focused {
+                    Style::default().bold()
+                } else {
+                    Style::default()
+                })
+                .borders(Borders::ALL)
+                .border_type(if is_focused {
+                    BorderType::Thick
+                } else {
+                    BorderType::Plain
+                })
+                .border_style(if is_focused {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default()
+                }),
+        )
+        .row_highlight_style(if is_focused {
+            Style::default().fg(Color::White).bg(Color::DarkGray)
+        } else {
+            Style::default()
+        });
 
-    let p = Paragraph::new(info.join("\n"))
-        .block(Block::default().title(" Info ").borders(Borders::ALL));
-    frame.render_widget(p, info_area);
+    let mut state = TableState::default().with_selected(app.nodes_selected);
+    frame.render_stateful_widget(table, area, &mut state);
 }
