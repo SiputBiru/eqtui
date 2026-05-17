@@ -35,7 +35,18 @@ unsafe extern "C" fn process_cb(data: *mut c_void, _position: *mut pw_filter_ffi
         let out_left = pw_filter_ffi::filter_get_dsp_buffer(fd.out_left, DEFAULT_N_SAMPLES);
         let out_right = pw_filter_ffi::filter_get_dsp_buffer(fd.out_right, DEFAULT_N_SAMPLES);
 
+        // Prevent panic: Check for null pointers
         if in_left.is_null() || in_right.is_null() || out_left.is_null() || out_right.is_null() {
+            return;
+        }
+
+        // Prevent panic: Check for proper f32 memory alignment
+        let align = std::mem::align_of::<f32>();
+        if (in_left as usize) % align != 0
+            || (in_right as usize) % align != 0
+            || (out_left as usize) % align != 0
+            || (out_right as usize) % align != 0
+        {
             return;
         }
 
@@ -45,8 +56,7 @@ unsafe extern "C" fn process_cb(data: *mut c_void, _position: *mut pw_filter_ffi
         let left_out = std::slice::from_raw_parts_mut(out_left, n);
         let right_out = std::slice::from_raw_parts_mut(out_right, n);
 
-        fd.pipeline
-            .process(left_in, right_in, left_out, right_out);
+        fd.pipeline.process(left_in, right_in, left_out, right_out);
     }
 }
 
@@ -165,7 +175,7 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
     // --- filter setup ---
 
     let props = unsafe {
-        let p = pw_filter_ffi::properties_new("media.class", "Audio/Sink");
+        let p = pw_filter_ffi::properties_new("media.class", "Audio/Filter");
         pw_filter_ffi::properties_set(p, "node.name", "eqtui");
         pw_filter_ffi::properties_set(p, "node.description", "eqtui Equalizer");
         p
