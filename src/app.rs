@@ -1,0 +1,77 @@
+use std::sync::Arc;
+
+use crate::config::Config;
+use crate::state::{NodeInfo, PwEvent};
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FocusedBlock {
+    Devices,
+    Pipeline,
+    CommandBar,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Mode {
+    Normal,
+    Insert,
+    Visual,
+    Command,
+}
+
+pub struct App {
+    pub running: bool,
+    pub config: Arc<Config>,
+    pub focused_block: FocusedBlock,
+    pub mode: Mode,
+    pub nodes: Vec<NodeInfo>,
+    pub nodes_selected: usize,
+    pub pw_connected: bool,
+    pub command_input: String,
+}
+
+impl App {
+    pub fn new(config: Arc<Config>) -> Self {
+        Self {
+            running: true,
+            config,
+            focused_block: FocusedBlock::Devices,
+            mode: Mode::Normal,
+            nodes: Vec::new(),
+            nodes_selected: 0,
+            pw_connected: false,
+            command_input: String::new(),
+        }
+    }
+
+    pub fn tick(&mut self) {}
+
+    pub fn handle_pw_event(&mut self, event: PwEvent) {
+        match event {
+            PwEvent::NodeList(list) => {
+                self.nodes = list;
+                if self.nodes_selected >= self.nodes.len() {
+                    self.nodes_selected = self.nodes.len().saturating_sub(1);
+                }
+            }
+            PwEvent::NodeAdded(node) => {
+                self.nodes.push(node);
+            }
+            PwEvent::NodeRemoved(id) => {
+                self.nodes.retain(|n| n.id != id);
+                if self.nodes_selected >= self.nodes.len() {
+                    self.nodes_selected = self.nodes.len().saturating_sub(1);
+                }
+            }
+            PwEvent::Connected => {
+                self.pw_connected = true;
+            }
+            PwEvent::Error(e) => {
+                eprintln!("PW error: {e}");
+            }
+        }
+    }
+
+    pub fn quit(&mut self) {
+        self.running = false;
+    }
+}

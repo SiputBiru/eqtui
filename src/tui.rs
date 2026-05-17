@@ -1,69 +1,59 @@
-use ratatui::{
-    Frame,
-    layout::{Constraint, Layout},
-    style::{Color, Style},
-    text::Line,
-    widgets::{Block, Borders, List, ListItem, Paragraph},
-};
+use std::io;
+use std::panic;
 
-use crate::state::AppState;
+use crossterm::cursor;
+use crossterm::event::DisableMouseCapture;
+use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
+use ratatui::backend::Backend;
+use ratatui::Terminal;
 
-pub fn render(frame: &mut Frame, state: &AppState) {
-    let area = frame.area();
+use crate::event::EventHandler;
+use crate::AppResult;
 
-    let [main_area, status_area] =
-        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
+pub struct Tui<B: Backend> {
+    terminal: Terminal<B>,
+    pub events: EventHandler,
+}
 
-    let [list_area, info_area] =
-        Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).areas(main_area);
+impl<B: Backend> Tui<B>
+where
+    <B as Backend>::Error: Send + Sync + 'static,
+{
+    pub fn new(terminal: Terminal<B>, events: EventHandler) -> Self {
+        Self { terminal, events }
+    }
 
-    let items: Vec<ListItem> = state
-        .nodes
-        .iter()
-        .enumerate()
-        .map(|(i, node)| {
-            let icon = if node.class == "Audio/Sink" {
-                "\u{1f50a} "
-            } else {
-                "\u{1f399}  "
-            };
-            let label = format!("{icon}{node}");
-            if i == state.selected {
-                ListItem::new(label).style(Style::default().fg(Color::Yellow))
-            } else {
-                ListItem::new(label)
-            }
-        })
-        .collect();
+    pub fn init(&mut self) -> AppResult<()> {
+        terminal::enable_raw_mode()?;
+        crossterm::execute!(io::stdout(), EnterAlternateScreen, cursor::Hide)?;
 
-    let list = List::new(items).block(Block::default().title(" Devices ").borders(Borders::ALL));
+        let panic_hook = panic::take_hook();
+        panic::set_hook(Box::new(move |info| {
+            Self::reset().ok();
+            panic_hook(info);
+        }));
 
-    frame.render_widget(list, list_area);
+        self.terminal.clear()?;
+        Ok(())
+    }
 
-    let info = if let Some(node) = state.nodes.get(state.selected) {
-        vec![
-            format!("  id:      {}", node.id),
-            format!("  name:    {}", node.name),
-            format!("  class:   {}", node.class_label()),
-        ]
-    } else {
-        vec!["(no devices)".into()]
-    };
+    pub fn draw<F>(&mut self, render: F) -> AppResult<()>
+    where
+        F: FnOnce(&mut ratatui::Frame),
+    {
+        self.terminal.draw(render)?;
+        Ok(())
+    }
 
-    let info_para = Paragraph::new(info.join("\n"))
-        .block(Block::default().title(" Details ").borders(Borders::ALL));
-    frame.render_widget(info_para, info_area);
+    fn reset() -> AppResult<()> {
+        terminal::disable_raw_mode()?;
+        crossterm::execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
+        Ok(())
+    }
 
-    let pw_status = if state.pw_connected {
-        "connected"
-    } else {
-        "disconnected"
-    };
-    let status_text = format!(
-        " PW: {}  |  {}  |  q:quit  ↑↓:navigate ",
-        pw_status, state.status
-    );
-    let status = Paragraph::new(Line::from(status_text))
-        .style(Style::default().fg(Color::Gray).bg(Color::DarkGray));
-    frame.render_widget(status, status_area);
+    pub fn exit(&mut self) -> AppResult<()> {
+        Self::reset()?;
+        self.terminal.show_cursor()?;
+        Ok(())
+    }
 }

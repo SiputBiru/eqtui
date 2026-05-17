@@ -1,5 +1,7 @@
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Clone)]
 pub struct NodeInfo {
     pub id: u32,
@@ -44,62 +46,17 @@ pub enum PwCommand {
     Terminate,
 }
 
-pub struct AppState {
-    pub nodes: Vec<NodeInfo>,
-    pub selected: usize,
-    pub pw_connected: bool,
-    pub status: String,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EqBand {
+    pub frequency: f32,
+    pub gain: f32,
+    pub q: f32,
+    pub filter_type: FilterType,
 }
 
-impl AppState {
-    pub fn new() -> Self {
-        Self {
-            nodes: Vec::new(),
-            selected: 0,
-            pw_connected: false,
-            status: "initializing...".into(),
-        }
-    }
-
-    pub fn handle_event(&mut self, event: PwEvent) {
-        match event {
-            PwEvent::NodeList(list) => {
-                self.nodes = list;
-                if self.selected >= self.nodes.len() {
-                    self.selected = self.nodes.len().saturating_sub(1);
-                }
-                self.status = format!("nodes: {}", self.nodes.len());
-            }
-            PwEvent::NodeAdded(node) => {
-                self.nodes.push(node);
-                self.status = format!("nodes: {}", self.nodes.len());
-            }
-            PwEvent::NodeRemoved(id) => {
-                self.nodes.retain(|n| n.id != id);
-                if self.selected >= self.nodes.len() {
-                    self.selected = self.nodes.len().saturating_sub(1);
-                }
-                self.status = format!("nodes: {}", self.nodes.len());
-            }
-            PwEvent::Connected => {
-                self.pw_connected = true;
-            }
-            PwEvent::Error(msg) => {
-                self.status = format!("error: {msg}");
-            }
-        }
-    }
-
-    pub fn select_next(&mut self) {
-        if !self.nodes.is_empty() {
-            self.selected = (self.selected + 1) % self.nodes.len();
-        }
-    }
-
-    pub fn select_prev(&mut self) {
-        if !self.nodes.is_empty() {
-            self.selected = self.selected.checked_sub(1)
-                .unwrap_or(self.nodes.len() - 1);
-        }
-    }
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum FilterType {
+    Peak,
+    LowShelf,
+    HighShelf,
 }
