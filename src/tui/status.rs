@@ -1,17 +1,30 @@
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
+use ratatui::symbols;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{LineGauge, Paragraph};
 use ratatui::Frame;
 
 use crate::app::{App, Mode};
 
 pub fn render(app: &App, frame: &mut Frame, area: Rect) {
+    let [text_area, meters_area] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ]).areas(area);
+
     let mut spans = vec![];
 
     // Connection status
     let pw_status = if app.pw_connected { "Connected" } else { "Disconnected" };
-    spans.push(Span::styled(format!("PW: {pw_status}"), if app.pw_connected { Style::default().fg(Color::Green) } else { Style::default().fg(Color::Red) }));
+    spans.push(Span::styled(
+        format!("PW: {pw_status}"),
+        if app.pw_connected {
+            Style::default().fg(Color::Green)
+        } else {
+            Style::default().fg(Color::Red)
+        },
+    ));
     spans.push(Span::raw(" | "));
 
     // Mode-specific hints
@@ -47,6 +60,35 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
     let p = Paragraph::new(Line::from(spans))
         .centered()
         .style(Style::default().fg(Color::Gray));
-    
-    frame.render_widget(p, area);
+    frame.render_widget(p, text_area);
+
+    // --- LineGauge Meters ---
+    let [_, meter_l_area, _, meter_r_area, _] = Layout::horizontal([
+        Constraint::Fill(1),
+        Constraint::Length(20),
+        Constraint::Length(4),
+        Constraint::Length(20),
+        Constraint::Fill(1),
+    ]).areas(meters_area);
+
+    let ratio_l = ((app.peak_l - (-60.0)) / 60.0).clamp(0.0, 1.0) as f64;
+    let ratio_r = ((app.peak_r - (-60.0)) / 60.0).clamp(0.0, 1.0) as f64;
+
+    let gauge_l = LineGauge::default()
+        .filled_style(Style::default().fg(Color::Green))
+        .unfilled_style(Style::default().fg(Color::DarkGray))
+        .label(format!("L {:.1}dB", app.peak_l))
+        .ratio(ratio_l)
+        .filled_symbol(symbols::line::THICK_HORIZONTAL)
+        .unfilled_symbol(symbols::line::THICK_HORIZONTAL);
+    frame.render_widget(gauge_l, meter_l_area);
+
+    let gauge_r = LineGauge::default()
+        .filled_style(Style::default().fg(Color::Green))
+        .unfilled_style(Style::default().fg(Color::DarkGray))
+        .label(format!("R {:.1}dB", app.peak_r))
+        .ratio(ratio_r)
+        .filled_symbol(symbols::line::THICK_HORIZONTAL)
+        .unfilled_symbol(symbols::line::THICK_HORIZONTAL);
+    frame.render_widget(gauge_r, meter_r_area);
 }

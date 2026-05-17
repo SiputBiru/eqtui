@@ -77,7 +77,7 @@ pub fn render(app: &App, frame: &mut ratatui::Frame) {
     .areas(area);
 
     let [main_area, status_area] =
-        Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(centered_area);
+        Layout::vertical([Constraint::Fill(1), Constraint::Length(2)]).areas(centered_area);
 
     match app.focused_block {
         FocusedBlock::Devices => {

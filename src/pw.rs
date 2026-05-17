@@ -35,6 +35,10 @@ unsafe extern "C" fn process_cb(data: *mut c_void, _position: *mut pw_filter_ffi
         let out_left = pw_filter_ffi::filter_get_dsp_buffer(fd.out_left, DEFAULT_N_SAMPLES);
         let out_right = pw_filter_ffi::filter_get_dsp_buffer(fd.out_right, DEFAULT_N_SAMPLES);
 
+        if in_left.is_null() || in_right.is_null() || out_left.is_null() || out_right.is_null() {
+            return;
+        }
+
         let n = DEFAULT_N_SAMPLES as usize;
         let left_in = std::slice::from_raw_parts(in_left, n);
         let right_in = std::slice::from_raw_parts(in_right, n);
@@ -160,11 +164,18 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
 
     // --- filter setup ---
 
+    let props = unsafe {
+        let p = pw_filter_ffi::properties_new("media.class", "Audio/Sink");
+        pw_filter_ffi::properties_set(p, "node.name", "eqtui");
+        pw_filter_ffi::properties_set(p, "node.description", "eqtui Equalizer");
+        p
+    };
+
     let filter = unsafe {
         pw_filter_ffi::filter_new(
             core.as_raw_ptr() as *mut pw_filter_ffi::pw_core,
             "eqtui",
-            std::ptr::null_mut(),
+            props,
         )
     };
 
@@ -173,13 +184,39 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
         return;
     }
 
+    // Name filter ports so pw-link can target them predictably.
+    let in_left_props = unsafe {
+        let p = pw_filter_ffi::properties_new("port.name", "input_FL");
+        pw_filter_ffi::properties_set(p, "audio.channel", "FL");
+        pw_filter_ffi::properties_set(p, "format.dsp", "32 bit float mono audio");
+        p
+    };
+    let in_right_props = unsafe {
+        let p = pw_filter_ffi::properties_new("port.name", "input_FR");
+        pw_filter_ffi::properties_set(p, "audio.channel", "FR");
+        pw_filter_ffi::properties_set(p, "format.dsp", "32 bit float mono audio");
+        p
+    };
+    let out_left_props = unsafe {
+        let p = pw_filter_ffi::properties_new("port.name", "output_FL");
+        pw_filter_ffi::properties_set(p, "audio.channel", "FL");
+        pw_filter_ffi::properties_set(p, "format.dsp", "32 bit float mono audio");
+        p
+    };
+    let out_right_props = unsafe {
+        let p = pw_filter_ffi::properties_new("port.name", "output_FR");
+        pw_filter_ffi::properties_set(p, "audio.channel", "FR");
+        pw_filter_ffi::properties_set(p, "format.dsp", "32 bit float mono audio");
+        p
+    };
+
     let in_left = unsafe {
         pw_filter_ffi::filter_add_port(
             filter,
             libspa_sys::SPA_DIRECTION_INPUT,
             pw_filter_ffi::PW_FILTER_PORT_FLAG_MAP_BUFFERS,
             0,
-            std::ptr::null_mut(),
+            in_left_props,
             std::ptr::null_mut(),
             0,
         )
@@ -191,7 +228,7 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
             libspa_sys::SPA_DIRECTION_INPUT,
             pw_filter_ffi::PW_FILTER_PORT_FLAG_MAP_BUFFERS,
             0,
-            std::ptr::null_mut(),
+            in_right_props,
             std::ptr::null_mut(),
             0,
         )
@@ -203,7 +240,7 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
             libspa_sys::SPA_DIRECTION_OUTPUT,
             pw_filter_ffi::PW_FILTER_PORT_FLAG_MAP_BUFFERS,
             0,
-            std::ptr::null_mut(),
+            out_left_props,
             std::ptr::null_mut(),
             0,
         )
@@ -215,7 +252,7 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
             libspa_sys::SPA_DIRECTION_OUTPUT,
             pw_filter_ffi::PW_FILTER_PORT_FLAG_MAP_BUFFERS,
             0,
-            std::ptr::null_mut(),
+            out_right_props,
             std::ptr::null_mut(),
             0,
         )

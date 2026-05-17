@@ -67,9 +67,9 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
                 let col = app.eq_column_selected;
                 if col < cells.len() {
                     let style = if app.mode == Mode::Insert {
-                        Style::default().fg(Color::Black).bg(Color::Cyan)
+                        Style::default().fg(Color::White).bg(Color::Cyan)
                     } else {
-                        Style::default().fg(Color::Black).bg(Color::Yellow)
+                        Style::default().fg(Color::White).bg(Color::DarkGray)
                     };
                     cells[col] = cells[col].clone().style(style);
                 }

@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use crate::effects::equalizer::Equalizer;
 use crate::effects::EffectPlugin;
@@ -7,6 +7,8 @@ use crate::state::EqBand;
 pub struct Pipeline {
     eq: Equalizer,
     bypass: AtomicBool,
+    peak_l: AtomicU32,
+    peak_r: AtomicU32,
 }
 
 impl Pipeline {
@@ -14,6 +16,8 @@ impl Pipeline {
         Self {
             eq: Equalizer::new(sample_rate),
             bypass: AtomicBool::new(false),
+            peak_l: AtomicU32::new(0.0_f32.to_bits()),
+            peak_r: AtomicU32::new(0.0_f32.to_bits()),
         }
     }
 
@@ -28,10 +32,36 @@ impl Pipeline {
             let n = left_in.len().min(left_out.len());
             left_out[..n].copy_from_slice(&left_in[..n]);
             right_out[..n].copy_from_slice(&right_in[..n]);
-            return;
+        } else {
+            self.eq.process(left_in, right_in, left_out, right_out);
         }
 
-        self.eq.process(left_in, right_in, left_out, right_out);
+        // Calculate and store peaks
+        let mut max_l = 0.0_f32;
+        for &sample in left_out.iter() {
+            let abs = sample.abs();
+            if abs > max_l {
+                max_l = abs;
+            }
+        }
+
+        let mut max_r = 0.0_f32;
+        for &sample in right_out.iter() {
+            let abs = sample.abs();
+            if abs > max_r {
+                max_r = abs;
+            }
+        }
+
+        self.peak_l.store(max_l.to_bits(), Ordering::Relaxed);
+        self.peak_r.store(max_r.to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn peaks(&self) -> (f32, f32) {
+        (
+            f32::from_bits(self.peak_l.load(Ordering::Relaxed)),
+            f32::from_bits(self.peak_r.load(Ordering::Relaxed)),
+        )
     }
 
     pub fn set_bands(&self, bands: Vec<EqBand>, sample_rate: f32) {
@@ -91,5 +121,21 @@ mod tests {
         assert!(p.is_bypassed());
         p.set_bypass(false);
         assert!(!p.is_bypassed());
+    }
+
+    #[test]
+    fn peak_measurement() {
+        let p = Pipeline::new(48000.0);
+        let left_in = vec![0.5_f32, -0.8_f32, 0.3_f32];
+        let right_in = vec![0.1_f32, 0.2_f32, -0.9_f32];
+        let mut left_out = vec![0.0_f32; 3];
+        let mut right_out = vec![0.0_f32; 3];
+
+        p.set_bypass(true);
+        p.process(&left_in, &right_in, &mut left_out, &mut right_out);
+
+        let (pk_l, pk_r) = p.peaks();
+        assert!((pk_l - 0.8).abs() < 1e-6);
+        assert!((pk_r - 0.9).abs() < 1e-6);
     }
 }

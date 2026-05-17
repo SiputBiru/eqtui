@@ -13,12 +13,44 @@
 #![allow(dead_code, unused_imports)]
 
 use std::ffi::CString;
-use std::os::raw::c_void;
+use std::os::raw::{c_char, c_void};
 
 pub use pipewire_sys::{
     pw_buffer, pw_core, pw_filter, pw_filter_events, pw_filter_flags, pw_filter_port_flags,
     pw_filter_state, pw_properties,
 };
+
+/// Create a new `pw_properties` with a single key-value pair.
+///
+/// # Safety
+/// The returned pointer must be freed with `properties_free`.
+pub unsafe fn properties_new(key: &str, value: &str) -> *mut pw_properties {
+    let c_key = CString::new(key).expect("key must not contain interior NUL");
+    let c_value = CString::new(value).expect("value must not contain interior NUL");
+    pipewire_sys::pw_properties_new(
+        c_key.as_ptr(),
+        c_value.as_ptr(),
+        std::ptr::null::<c_char>(),
+    )
+}
+
+/// Set a property on an existing `pw_properties`.
+///
+/// # Safety
+/// `props` must be a valid, non-null pointer returned by `properties_new`.
+pub unsafe fn properties_set(props: *mut pw_properties, key: &str, value: &str) {
+    let c_key = CString::new(key).expect("key must not contain interior NUL");
+    let c_value = CString::new(value).expect("value must not contain interior NUL");
+    pipewire_sys::pw_properties_set(props, c_key.as_ptr(), c_value.as_ptr());
+}
+
+/// Free a `pw_properties`.
+///
+/// # Safety
+/// `props` must be a valid, non-null pointer returned by `properties_new`.
+pub unsafe fn properties_free(props: *mut pw_properties) {
+    pipewire_sys::pw_properties_free(props);
+}
 pub use pipewire_sys::{
     pw_filter_flags_PW_FILTER_FLAG_RT_PROCESS as PW_FILTER_FLAG_RT_PROCESS,
     pw_filter_port_flags_PW_FILTER_PORT_FLAG_MAP_BUFFERS as PW_FILTER_PORT_FLAG_MAP_BUFFERS,
