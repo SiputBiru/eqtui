@@ -30,6 +30,23 @@ fn handle_devices(key: KeyEvent, app: &mut App) {
                     .unwrap_or(app.nodes.len() - 1);
             }
         }
+        KeyCode::Enter => {
+            if !app.nodes.is_empty() {
+                let target_node = &app.nodes[app.nodes_selected];
+                let target_id = target_node.id;
+                
+                // Disconnect existing if any
+                let _ = std::process::Command::new("pw-link").args(["-d", "eqtui:output_FL", "-a"]).output();
+                let _ = std::process::Command::new("pw-link").args(["-d", "eqtui:output_FR", "-a"]).output();
+
+                // Connect to target using PipeWire's node ID alias syntax
+                let target_id_str = target_id.to_string();
+                let _ = std::process::Command::new("pw-link").args(["eqtui:output_FL", &format!("{}:playback_FL", target_id_str)]).output();
+                let _ = std::process::Command::new("pw-link").args(["eqtui:output_FR", &format!("{}:playback_FR", target_id_str)]).output();
+
+                app.attached_node = Some(target_id);
+            }
+        }
         _ => {}
     }
 }
@@ -325,6 +342,25 @@ mod tests {
         app.eq_column_selected = 4;
         handle_pipeline(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE), &mut app);
         assert_eq!(app.cell_input.value(), "PK");
+    }
+
+    #[test]
+    fn test_handle_devices_enter() {
+        let config = Arc::new(Config::default());
+        let pipeline = Arc::new(Pipeline::new(48000.0));
+        let mut app = App::new(config, pipeline);
+        app.focused_block = FocusedBlock::Devices;
+        app.nodes.push(crate::state::NodeInfo {
+            id: 123,
+            name: "Test Node".to_string(),
+            description: "Test Description".to_string(),
+            class: crate::state::DeviceClass::Speaker,
+        });
+        app.nodes_selected = 0;
+
+        handle_devices(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut app);
+        
+        assert_eq!(app.attached_node, Some(123));
     }
 }
 

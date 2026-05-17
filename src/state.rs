@@ -58,6 +58,7 @@ pub enum PwEvent {
     #[allow(dead_code)]
     NodeRemoved(u32),
     Connected,
+    FilterStateChanged(String),
     NullSinkCreated { module_id: u32 },
     NullSinkError(String),
     Error(String),

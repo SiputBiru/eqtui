@@ -41,6 +41,8 @@ pub struct App {
     pub peak_r: f32,
     pub null_sink_loaded: bool,
     pub null_sink_module_id: Option<u32>,
+    pub attached_node: Option<u32>,
+    pub filter_state: String,
 }
 
 impl App {
@@ -65,6 +67,8 @@ impl App {
             peak_r: -60.0,
             null_sink_loaded: false,
             null_sink_module_id: None,
+            attached_node: None,
+            filter_state: "UNCONNECTED".to_string(),
         }
     }
 
@@ -119,6 +123,9 @@ impl App {
             PwEvent::Connected => {
                 self.pw_connected = true;
             }
+            PwEvent::FilterStateChanged(state) => {
+                self.filter_state = state;
+            }
             PwEvent::NullSinkCreated { module_id } => {
                 self.null_sink_loaded = true;
                 self.null_sink_module_id = Some(module_id);
@@ -162,5 +169,7 @@ mod tests {
         assert_eq!(app.peak_r, -60.0);
         assert!(!app.null_sink_loaded);
         assert_eq!(app.null_sink_module_id, None);
+        assert_eq!(app.attached_node, None);
+        assert_eq!(app.filter_state, "UNCONNECTED");
     }
 }

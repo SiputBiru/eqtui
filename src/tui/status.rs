@@ -2,30 +2,68 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::symbols;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{LineGauge, Paragraph};
+use ratatui::widgets::{self, LineGauge, Paragraph};
 use ratatui::Frame;
 
 use crate::app::{App, Mode};
 
-pub fn render(app: &App, frame: &mut Frame, area: Rect) {
+pub fn render_monitoring(app: &App, frame: &mut Frame, area: Rect) {
+    let block = widgets::Block::default()
+        .title(" Monitoring ")
+        .borders(widgets::Borders::ALL)
+        .border_style(Style::default().fg(Color::DarkGray));
+    
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
     let [text_area, meters_area] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(1),
-    ]).areas(area);
+        Constraint::Length(3),
+        Constraint::Fill(1),
+    ]).areas(inner);
 
+    // 1. Text Stats
+    let pw_status = if app.pw_connected { "Connected".green() } else { "Disconnected".red() };
+    let state_color = match app.filter_state.as_str() {
+        "STREAMING" => Color::Green,
+        "CONNECTING" => Color::Yellow,
+        "ERROR" => Color::Red,
+        _ => Color::DarkGray,
+    };
+    
+    let stats = vec![
+        Line::from(vec![Span::raw("PW: "), pw_status]),
+        Line::from(vec![Span::raw("State: "), Span::styled(&app.filter_state, Style::default().fg(state_color).bold())]),
+        Line::from(vec![Span::raw("Attached: "), if let Some(id) = app.attached_node { Span::styled(format!("ID {}", id), Style::default().fg(Color::Cyan)) } else { Span::raw("None").dark_gray() }]),
+    ];
+    frame.render_widget(Paragraph::new(stats), text_area);
+
+    // 2. Meters (Vertical stack for sidebar)
+    let [l_area, r_area] = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(meters_area);
+    
+    let ratio_l = ((app.peak_l - (-60.0)) / 60.0).clamp(0.0, 1.0) as f64;
+    let ratio_r = ((app.peak_r - (-60.0)) / 60.0).clamp(0.0, 1.0) as f64;
+
+    let gauge_l = LineGauge::default()
+        .filled_style(Style::default().fg(Color::Green))
+        .unfilled_style(Style::default().fg(Color::DarkGray))
+        .label(format!("L {:.1}dB", app.peak_l))
+        .ratio(ratio_l)
+        .filled_symbol(symbols::line::THICK_HORIZONTAL)
+        .unfilled_symbol(symbols::line::THICK_HORIZONTAL);
+    frame.render_widget(gauge_l, l_area);
+
+    let gauge_r = LineGauge::default()
+        .filled_style(Style::default().fg(Color::Green))
+        .unfilled_style(Style::default().fg(Color::DarkGray))
+        .label(format!("R {:.1}dB", app.peak_r))
+        .ratio(ratio_r)
+        .filled_symbol(symbols::line::THICK_HORIZONTAL)
+        .unfilled_symbol(symbols::line::THICK_HORIZONTAL);
+    frame.render_widget(gauge_r, r_area);
+}
+
+pub fn render_hints(app: &App, frame: &mut Frame, area: Rect) {
     let mut spans = vec![];
-
-    // Connection status
-    let pw_status = if app.pw_connected { "Connected" } else { "Disconnected" };
-    spans.push(Span::styled(
-        format!("PW: {pw_status}"),
-        if app.pw_connected {
-            Style::default().fg(Color::Green)
-        } else {
-            Style::default().fg(Color::Red)
-        },
-    ));
-    spans.push(Span::raw(" | "));
 
     // Mode-specific hints
     match app.mode {
@@ -57,38 +95,6 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
         _ => {}
     };
 
-    let p = Paragraph::new(Line::from(spans))
-        .centered()
-        .style(Style::default().fg(Color::Gray));
-    frame.render_widget(p, text_area);
-
-    // --- LineGauge Meters ---
-    let [_, meter_l_area, _, meter_r_area, _] = Layout::horizontal([
-        Constraint::Fill(1),
-        Constraint::Length(20),
-        Constraint::Length(4),
-        Constraint::Length(20),
-        Constraint::Fill(1),
-    ]).areas(meters_area);
-
-    let ratio_l = ((app.peak_l - (-60.0)) / 60.0).clamp(0.0, 1.0) as f64;
-    let ratio_r = ((app.peak_r - (-60.0)) / 60.0).clamp(0.0, 1.0) as f64;
-
-    let gauge_l = LineGauge::default()
-        .filled_style(Style::default().fg(Color::Green))
-        .unfilled_style(Style::default().fg(Color::DarkGray))
-        .label(format!("L {:.1}dB", app.peak_l))
-        .ratio(ratio_l)
-        .filled_symbol(symbols::line::THICK_HORIZONTAL)
-        .unfilled_symbol(symbols::line::THICK_HORIZONTAL);
-    frame.render_widget(gauge_l, meter_l_area);
-
-    let gauge_r = LineGauge::default()
-        .filled_style(Style::default().fg(Color::Green))
-        .unfilled_style(Style::default().fg(Color::DarkGray))
-        .label(format!("R {:.1}dB", app.peak_r))
-        .ratio(ratio_r)
-        .filled_symbol(symbols::line::THICK_HORIZONTAL)
-        .unfilled_symbol(symbols::line::THICK_HORIZONTAL);
-    frame.render_widget(gauge_r, meter_r_area);
+    let p = Paragraph::new(Line::from(spans)).style(Style::default().fg(Color::Gray));
+    frame.render_widget(p, area);
 }

@@ -9,7 +9,7 @@ use ratatui::backend::Backend;
 use ratatui::layout::{Constraint, Layout};
 
 use crate::AppResult;
-use crate::app::{App, FocusedBlock};
+use crate::app::App;
 use crate::event::EventHandler;
 
 pub mod devices;
@@ -67,32 +67,35 @@ where
 pub fn render(app: &App, frame: &mut ratatui::Frame) {
     let area = frame.area();
 
-    // Add margin and max width
-    let [_, centered_area, _] = Layout::horizontal([
+    let [main_content, hint_area] = Layout::vertical([
         Constraint::Fill(1),
-        Constraint::Max(250),
-        Constraint::Fill(1),
+        Constraint::Length(1),
     ])
     .margin(1)
     .areas(area);
 
-    let [main_area, status_area] =
-        Layout::vertical([Constraint::Fill(1), Constraint::Length(2)]).areas(centered_area);
+    let [sidebar_area, main_view_area] = Layout::horizontal([
+        Constraint::Percentage(35),
+        Constraint::Percentage(65),
+    ]).areas(main_content);
 
-    match app.focused_block {
-        FocusedBlock::Devices => {
-            devices::render(app, frame, main_area);
-        }
-        FocusedBlock::Pipeline => {
-            let [top, bottom] =
-                Layout::vertical([Constraint::Length(10), Constraint::Fill(1)]).areas(main_area);
-            devices::render(app, frame, top);
-            eq_table::render(app, frame, bottom);
-        }
-        FocusedBlock::CommandBar => {
-            devices::render(app, frame, main_area);
-        }
-    }
+    let [devices_area, bands_area, monitoring_area] = Layout::vertical([
+        Constraint::Fill(2),
+        Constraint::Fill(3),
+        Constraint::Length(8),
+    ]).areas(sidebar_area);
 
-    status::render(app, frame, status_area);
+    // Render components
+    devices::render(app, frame, devices_area);
+    eq_table::render(app, frame, bands_area);
+    status::render_monitoring(app, frame, monitoring_area);
+    status::render_hints(app, frame, hint_area);
+    
+    // Empty Right Pane (Detail)
+    let p = ratatui::widgets::Paragraph::new("")
+        .block(ratatui::widgets::Block::default()
+            .title(" Detail ")
+            .borders(ratatui::widgets::Borders::ALL)
+            .border_style(ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray)));
+    frame.render_widget(p, main_view_area);
 }

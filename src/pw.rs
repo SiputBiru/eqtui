@@ -24,6 +24,7 @@ struct FilterData {
     in_right: *mut c_void,
     out_left: *mut c_void,
     out_right: *mut c_void,
+    tx: mpsc::Sender<PwEvent>,
 }
 
 unsafe extern "C" fn process_cb(data: *mut c_void, _position: *mut pw_filter_ffi::spa_io_position) {
@@ -62,16 +63,15 @@ unsafe extern "C" fn process_cb(data: *mut c_void, _position: *mut pw_filter_ffi
 
 unsafe extern "C" fn state_changed_cb(
     data: *mut c_void,
-    old: pw_filter_ffi::pw_filter_state,
+    _old: pw_filter_ffi::pw_filter_state,
     new: pw_filter_ffi::pw_filter_state,
     _error: *const std::os::raw::c_char,
 ) {
-    eprintln!(
-        "[eqtui] filter: {} -> {}",
-        state_name_for(old),
-        state_name_for(new)
-    );
-    let _ = data;
+    unsafe {
+        let fd = &*(data as *const FilterData);
+        let state_str = state_name_for(new).to_string();
+        let _ = fd.tx.send(PwEvent::FilterStateChanged(state_str));
+    }
 }
 
 fn state_name_for(s: pw_filter_ffi::pw_filter_state) -> &'static str {
@@ -175,7 +175,7 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
     // --- filter setup ---
 
     let props = unsafe {
-        let p = pw_filter_ffi::properties_new("media.class", "Audio/Filter");
+        let p = pw_filter_ffi::properties_new("media.class", "Audio/Sink");
         pw_filter_ffi::properties_set(p, "node.name", "eqtui");
         pw_filter_ffi::properties_set(p, "node.description", "eqtui Equalizer");
         p
@@ -274,6 +274,7 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
         in_right,
         out_left,
         out_right,
+        tx: tx.clone(),
     });
 
     let mut events: pw_filter_ffi::pw_filter_events = unsafe { std::mem::zeroed() };
