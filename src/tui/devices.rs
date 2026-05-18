@@ -1,6 +1,6 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Cell, Row, Table, TableState};
 
 use crate::app::{App, FocusedBlock};
@@ -20,10 +20,31 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
         .nodes
         .iter()
         .map(|node| {
+            let is_eqtui = node.description.contains("eqtui");
             let icon = node.class.icon();
+
+            let mut name = node.to_string();
+            if is_eqtui {
+                name.push_str(" \u{2190}this app");
+            }
+
+            let name_cell = if is_eqtui {
+                Cell::new(name).style(
+                    Style::default()
+                        .add_modifier(Modifier::BOLD)
+                        .fg(Color::Cyan),
+                )
+            } else if app.bound_output_id == Some(node.id) {
+                Cell::new(format!("\u{2192} {name}")).style(
+                    Style::default().fg(Color::Green),
+                )
+            } else {
+                Cell::new(name)
+            };
+
             Row::new(vec![
                 Cell::new(icon),
-                Cell::new(node.to_string()),
+                name_cell,
                 Cell::new(node.id.to_string()),
             ])
         })

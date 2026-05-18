@@ -1,7 +1,8 @@
-use std::sync::mpsc;
 use std::sync::Arc;
+use std::sync::mpsc;
 
 use eqtui::{
+    AppResult,
     app::App,
     config::Config,
     event::EventHandler,
@@ -9,7 +10,6 @@ use eqtui::{
     pipeline::Pipeline,
     state::{PwCommand, PwEvent},
     tui::Tui,
-    AppResult,
 };
 use ratatui::backend::CrosstermBackend;
 
@@ -55,7 +55,11 @@ fn main() -> AppResult<()> {
 
         match tui.events.next()? {
             eqtui::event::Event::Tick => app.tick(),
-            eqtui::event::Event::Key(key) => handler::dispatch(key, &mut app),
+            eqtui::event::Event::Key(key) => {
+                if let Some(cmd) = handler::dispatch(key, &mut app) {
+                    let _ = to_pw.send(cmd);
+                }
+            }
             eqtui::event::Event::Resize(_, _) => {}
         }
 

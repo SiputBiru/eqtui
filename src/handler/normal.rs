@@ -1,17 +1,23 @@
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::{App, FocusedBlock, Mode};
-use crate::state::{EqBand, FilterType};
+use crate::state::{EqBand, FilterType, PwCommand};
 
-pub fn handle(key: KeyEvent, app: &mut App) {
+pub fn handle(key: KeyEvent, app: &mut App) -> Option<PwCommand> {
     match app.focused_block {
         FocusedBlock::Devices => handle_devices(key, app),
-        FocusedBlock::Pipeline => handle_pipeline(key, app),
-        FocusedBlock::CommandBar => handle_command_bar(key, app),
+        FocusedBlock::Pipeline => {
+            handle_pipeline(key, app);
+            None
+        }
+        FocusedBlock::CommandBar => {
+            handle_command_bar(key, app);
+            None
+        }
     }
 }
 
-fn handle_devices(key: KeyEvent, app: &mut App) {
+fn handle_devices(key: KeyEvent, app: &mut App) -> Option<PwCommand> {
     match key.code {
         KeyCode::Char('q') => app.quit(),
         KeyCode::Tab | KeyCode::Char('l') => {
@@ -33,22 +39,18 @@ fn handle_devices(key: KeyEvent, app: &mut App) {
         KeyCode::Enter => {
             if !app.nodes.is_empty() {
                 let target_node = &app.nodes[app.nodes_selected];
+                // Skip if it's the eqtui null sink itself (can't route eqtui → eqtui)
+                if target_node.description.contains("eqtui") {
+                    return None;
+                }
                 let target_id = target_node.id;
-                
-                // Disconnect existing if any
-                let _ = std::process::Command::new("pw-link").args(["-d", "eqtui:output_FL", "-a"]).output();
-                let _ = std::process::Command::new("pw-link").args(["-d", "eqtui:output_FR", "-a"]).output();
-
-                // Connect to target using PipeWire's node ID alias syntax
-                let target_id_str = target_id.to_string();
-                let _ = std::process::Command::new("pw-link").args(["eqtui:output_FL", &format!("{}:playback_FL", target_id_str)]).output();
-                let _ = std::process::Command::new("pw-link").args(["eqtui:output_FR", &format!("{}:playback_FR", target_id_str)]).output();
-
-                app.attached_node = Some(target_id);
+                app.bound_output_id = Some(target_id);
+                return Some(PwCommand::SetTarget { node_id: target_id });
             }
         }
         _ => {}
     }
+    None
 }
 
 fn handle_pipeline(key: KeyEvent, app: &mut App) {
@@ -358,9 +360,36 @@ mod tests {
         });
         app.nodes_selected = 0;
 
-        handle_devices(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut app);
-        
-        assert_eq!(app.attached_node, Some(123));
+        let result = handle_devices(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &mut app,
+        );
+
+        assert!(result.is_some());
+        assert_eq!(app.bound_output_id, Some(123));
+    }
+
+    #[test]
+    fn test_handle_devices_enter_skips_eqtui() {
+        let config = Arc::new(Config::default());
+        let pipeline = Arc::new(Pipeline::new(48000.0));
+        let mut app = App::new(config, pipeline);
+        app.focused_block = FocusedBlock::Devices;
+        app.nodes.push(crate::state::NodeInfo {
+            id: 99,
+            name: "eqtui Equalizer".to_string(),
+            description: "eqtui Equalizer".to_string(),
+            class: crate::state::DeviceClass::Speaker,
+        });
+        app.nodes_selected = 0;
+
+        let result = handle_devices(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &mut app,
+        );
+
+        assert!(result.is_none());
+        assert_eq!(app.bound_output_id, None);
     }
 }
 

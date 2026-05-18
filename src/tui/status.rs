@@ -33,7 +33,7 @@ pub fn render_monitoring(app: &App, frame: &mut Frame, area: Rect) {
     let stats = vec![
         Line::from(vec![Span::raw("PW: "), pw_status]),
         Line::from(vec![Span::raw("State: "), Span::styled(&app.filter_state, Style::default().fg(state_color).bold())]),
-        Line::from(vec![Span::raw("Attached: "), if let Some(id) = app.attached_node { Span::styled(format!("ID {}", id), Style::default().fg(Color::Cyan)) } else { Span::raw("None").dark_gray() }]),
+        Line::from(vec![Span::raw("Output: "), if let Some(id) = app.bound_output_id { Span::styled(format!("ID {}", id), Style::default().fg(Color::Cyan)) } else { Span::raw("default").dark_gray() }]),
     ];
     frame.render_widget(Paragraph::new(stats), text_area);
 

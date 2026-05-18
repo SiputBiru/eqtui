@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use crate::effects::equalizer::Equalizer;
 use crate::effects::EffectPlugin;
+use crate::effects::equalizer::Equalizer;
 use crate::state::EqBand;
 
 pub struct Pipeline {

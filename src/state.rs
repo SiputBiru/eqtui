@@ -66,6 +66,7 @@ pub enum PwEvent {
 
 pub enum PwCommand {
     Terminate,
+    SetTarget { node_id: u32 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

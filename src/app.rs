@@ -41,7 +41,7 @@ pub struct App {
     pub peak_r: f32,
     pub null_sink_loaded: bool,
     pub null_sink_module_id: Option<u32>,
-    pub attached_node: Option<u32>,
+    pub bound_output_id: Option<u32>,
     pub filter_state: String,
 }
 
@@ -67,7 +67,7 @@ impl App {
             peak_r: -60.0,
             null_sink_loaded: false,
             null_sink_module_id: None,
-            attached_node: None,
+            bound_output_id: None,
             filter_state: "UNCONNECTED".to_string(),
         }
     }
@@ -172,7 +172,7 @@ mod tests {
         assert_eq!(app.peak_r, -60.0);
         assert!(!app.null_sink_loaded);
         assert_eq!(app.null_sink_module_id, None);
-        assert_eq!(app.attached_node, None);
+        assert_eq!(app.bound_output_id, None);
         assert_eq!(app.filter_state, "UNCONNECTED");
     }
 }
