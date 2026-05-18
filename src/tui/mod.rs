@@ -14,6 +14,7 @@ use crate::event::EventHandler;
 
 pub mod devices;
 pub mod eq_table;
+pub mod graph;
 pub mod status;
 
 pub struct Tui<B: Backend> {
@@ -91,11 +92,6 @@ pub fn render(app: &App, frame: &mut ratatui::Frame) {
     status::render_monitoring(app, frame, monitoring_area);
     status::render_hints(app, frame, hint_area);
     
-    // Empty Right Pane (Detail)
-    let p = ratatui::widgets::Paragraph::new("")
-        .block(ratatui::widgets::Block::default()
-            .title(" Detail ")
-            .borders(ratatui::widgets::Borders::ALL)
-            .border_style(ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray)));
-    frame.render_widget(p, main_view_area);
+    // Right Pane (Detail)
+    graph::render(app, frame, main_view_area);
 }
