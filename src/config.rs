@@ -90,12 +90,12 @@ fn default_bump_down() -> char { '-' }
 
 impl Config {
     pub fn new(config_path: Option<PathBuf>) -> Self {
-        let path = config_path.unwrap_or(
+        let path = config_path.unwrap_or_else(|| {
             dirs::config_dir()
-                .unwrap()
+                .expect("XDG config directory not found — set $XDG_CONFIG_HOME or $HOME")
                 .join("eqtui")
-                .join("config.toml"),
-        );
+                .join("config.toml")
+        });
 
         match fs::read_to_string(&path) {
             Ok(content) => toml::from_str(&content).unwrap_or_default(),

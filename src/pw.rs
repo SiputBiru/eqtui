@@ -27,8 +27,10 @@ pub(crate) struct Props(*mut pipewire_sys::pw_properties);
 
 impl Props {
     pub(crate) fn new(key: &str, val: &str) -> Self {
-        let k = CString::new(key).unwrap();
-        let v = CString::new(val).unwrap();
+        let k = CString::new(key)
+            .expect("Props::new key should not contain null bytes");
+        let v = CString::new(val)
+            .expect("Props::new val should not contain null bytes");
         let p = unsafe {
             pipewire_sys::pw_properties_new(k.as_ptr(), v.as_ptr(), ptr::null::<c_char>())
         };
@@ -36,8 +38,10 @@ impl Props {
     }
 
     pub(crate) fn set(&self, key: &str, val: &str) {
-        let k = CString::new(key).unwrap();
-        let v = CString::new(val).unwrap();
+        let k = CString::new(key)
+            .expect("Props::set key should not contain null bytes");
+        let v = CString::new(val)
+            .expect("Props::set val should not contain null bytes");
         unsafe {
             pipewire_sys::pw_properties_set(self.0, k.as_ptr(), v.as_ptr());
         }
@@ -153,7 +157,7 @@ pub(crate) fn state_name_for(s: pipewire_sys::pw_filter_state) -> &'static str {
 }
 
 // FilterHandle — bundles all pointers needed for teardown / recreation
-#[allow(dead_code)]
+#[expect(dead_code, reason = "used via Cell<Option<FilterHandle>> in run()")]
 struct FilterHandle {
     filter: *mut pipewire_sys::pw_filter,
     port_in_l: *mut c_void,
@@ -218,7 +222,8 @@ fn create_eq_filter(
         props.set("node.target", &id.to_string());
     }
 
-    let name_cstr = CString::new("eqtui").unwrap();
+    let name_cstr = CString::new("eqtui")
+        .expect("static filter name should not contain null");
     let filter =
         unsafe { pipewire_sys::pw_filter_new(core_raw, name_cstr.as_ptr(), props.into_raw()) };
 
@@ -333,7 +338,7 @@ fn create_eq_filter(
             properties: audio_info.into(),
         }),
     )
-    .unwrap()
+    .expect("SPA pod serialization failed — invalid audio format params")
     .0
     .into_inner();
 

@@ -53,9 +53,7 @@ impl fmt::Display for NodeInfo {
 
 pub enum PwEvent {
     NodeList(Vec<NodeInfo>),
-    #[allow(dead_code)]
     NodeAdded(NodeInfo),
-    #[allow(dead_code)]
     NodeRemoved(u32),
     Connected,
     FilterStateChanged(String),

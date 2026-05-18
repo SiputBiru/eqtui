@@ -1,4 +1,7 @@
-#![allow(dead_code)]
+#![expect(
+    dead_code,
+    reason = "scaffolded code for future features (Resize event, etc.)"
+)]
 
 use std::sync::mpsc;
 use std::thread;

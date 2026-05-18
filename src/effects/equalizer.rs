@@ -43,9 +43,9 @@ impl Equalizer {
             .map(|b| biquad_coefficients(b, sample_rate))
             .collect();
         let len = coeffs.len();
-        *self.bands.write().unwrap() = coeffs;
-        *self.states_l.write().unwrap() = vec![BiquadState::default(); len];
-        *self.states_r.write().unwrap() = vec![BiquadState::default(); len];
+        *self.bands.write().expect("EQ RwLock poisoned") = coeffs;
+        *self.states_l.write().expect("EQ RwLock poisoned") = vec![BiquadState::default(); len];
+        *self.states_r.write().expect("EQ RwLock poisoned") = vec![BiquadState::default(); len];
     }
 }
 
@@ -185,21 +185,21 @@ impl EffectPlugin for Equalizer {
     ) {
         let n = left_in.len().min(left_out.len());
 
-        if *self.bypass.read().unwrap() {
+        if *self.bypass.read().expect("EQ RwLock poisoned") {
             left_out[..n].copy_from_slice(&left_in[..n]);
             right_out[..n].copy_from_slice(&right_in[..n]);
             return;
         }
 
-        let bands = self.bands.read().unwrap();
+        let bands = self.bands.read().expect("EQ RwLock poisoned");
         if bands.is_empty() {
             left_out[..n].copy_from_slice(&left_in[..n]);
             right_out[..n].copy_from_slice(&right_in[..n]);
             return;
         }
 
-        let mut states_l = self.states_l.write().unwrap();
-        let mut states_r = self.states_r.write().unwrap();
+        let mut states_l = self.states_l.write().expect("EQ RwLock poisoned");
+        let mut states_r = self.states_r.write().expect("EQ RwLock poisoned");
 
         for i in 0..n {
             let mut l = left_in[i];
@@ -233,18 +233,18 @@ impl EffectPlugin for Equalizer {
     }
 
     fn bypass(&self) -> bool {
-        *self.bypass.read().unwrap()
+        *self.bypass.read().expect("EQ RwLock poisoned")
     }
 
     fn set_bypass(&self, bypass: bool) {
-        *self.bypass.write().unwrap() = bypass;
+        *self.bypass.write().expect("EQ RwLock poisoned") = bypass;
     }
 
     fn reset(&self) {
-        for s in self.states_l.write().unwrap().iter_mut() {
+        for s in self.states_l.write().expect("EQ RwLock poisoned").iter_mut() {
             *s = BiquadState::default();
         }
-        for s in self.states_r.write().unwrap().iter_mut() {
+        for s in self.states_r.write().expect("EQ RwLock poisoned").iter_mut() {
             *s = BiquadState::default();
         }
     }
