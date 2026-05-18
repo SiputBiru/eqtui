@@ -17,7 +17,7 @@ pub fn render_monitoring(app: &App, frame: &mut Frame, area: Rect) {
     frame.render_widget(block, area);
 
     let [text_area, meters_area] = Layout::vertical([
-        Constraint::Length(3),
+        Constraint::Length(4),
         Constraint::Fill(1),
     ]).areas(inner);
 
@@ -34,6 +34,11 @@ pub fn render_monitoring(app: &App, frame: &mut Frame, area: Rect) {
         Line::from(vec![Span::raw("PW: "), pw_status]),
         Line::from(vec![Span::raw("State: "), Span::styled(&app.filter_state, Style::default().fg(state_color).bold())]),
         Line::from(vec![Span::raw("Output: "), if let Some(id) = app.bound_output_id { Span::styled(format!("ID {}", id), Style::default().fg(Color::Cyan)) } else { Span::raw("default").dark_gray() }]),
+        Line::from(vec![Span::raw("Null Sink: "), if app.null_sink_loaded {
+            Span::styled(format!("Loaded (ID {})", app.null_sink_module_id.unwrap_or(0)), Style::default().fg(Color::Cyan))
+        } else {
+            Span::raw("Not loaded").dark_gray()
+        }]),
     ];
     frame.render_widget(Paragraph::new(stats), text_area);
 

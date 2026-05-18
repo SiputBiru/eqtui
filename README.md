@@ -1,160 +1,151 @@
 # eqtui
 
-> Terminal-native audio effects processor for PipeWire.  
-> Like EasyEffects, but in your terminal. Vim keybindings included.
+Terminal-native audio effects processor for PipeWire.  
+A keyboard-driven alternative to EasyEffects, rendered with Ratatui.
 
-## Motivation
+<p align="left">
+  <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/Rust-2024_edition-orange.svg" alt="Rust 2024"></a>
+  <a href="https://ratatui.rs"><img src="https://img.shields.io/badge/TUI-Ratatui-red.svg" alt="Ratatui"></a>
+  <a href="https://pipewire.org"><img src="https://img.shields.io/badge/PipeWire-0.10-blue.svg" alt="PipeWire"></a>
+  <img src="https://img.shields.io/badge/Platform-Linux-green.svg" alt="Linux">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-lightgrey.svg" alt="MIT"></a>
+  <a href="https://github.com/SiputBiru/eqtui/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/SiputBiru/eqtui/ci.yml?branch=main&label=CI" alt="CI"></a>
+</p>
 
-**EasyEffects** is the de facto Linux audio effects suite — 33 plugins, PipeWire-native, feature-complete. But it's tied to Qt6/QML and the GTK desktop ecosystem. If you live in the terminal, switch window managers, or just want a lightweight, keyboard-driven audio toolbox, there's nothing.
+---
 
-**eqtui** is toolbox. Same PipeWire pipeline architecture, same effect chain, but rendered entirely in the terminal with `ratatui`. No Qt, no GTK, no DE dependency. Add AutoEQ integration as a first-class feature (import headphone correction profiles with one keypress).
+## Demo
 
-Built with [ratatui] and [PipeWire].
+[Insert Demo/GIF Here]
 
-[ratatui]: https://ratatui.rs
-[PipeWire]: https://pipewire.org
+---
+
+## Overview
+
+Audio processing in the Linux ecosystem often relies on graphical toolkits such as GTK or Qt. For environments centered around terminal interfaces or minimalist window managers, eqtui provides an alternative for audio effect management.
+
+The application utilizes a PipeWire-native architecture to insert processing nodes directly into the audio graph. This approach enables audio processing between applications and hardware sinks without graphical desktop environment dependencies.
 
 ## Features
 
-- **PipeWire-native** — no PulseAudio compatibility layer, no JACK bridge
-- **Parametric equalizer** — per-band frequency, gain, Q, and filter type
-- **Vim-inspired modes** — Normal, Insert, Visual, Command
-- **Keyboard-first** — every action reachable without a mouse
-- **Configurable keybindings** — TOML config, customize everything
-- **AutoEQ integration** — import headphone correction profiles directly
-- **Single static binary** — no runtime dependencies beyond PipeWire
-- **Lightweight** — sub-10MB binary, minimal RAM at idle
+- **PipeWire Integration** — Implements the `pw_filter` API for direct insertion into the audio graph.
+- **Parametric Equalizer** — Controls frequency, gain, Q, and filter type per band.
+- **Vim-Inspired Interface** — Modal interaction (Normal, Insert, Visual, Command) for keyboard-driven operation.
+- **AutoEQ Support** — Imports headphone correction profiles from the AutoEQ project.
+- **Resource Usage** — Distributed as a static binary with low memory and CPU requirements.
+- **Configuration** — Customizable keybindings and settings via TOML.
+
+### Architecture
+
+```
+ [Spotify] ─┐
+ [Firefox] ─┤                   eqtui
+ [mpd    ] ─┤  ┌──────────────────────────────────────┐
+            ├──►  Null Sink       pw_filter           ├──► [Real Speakers]
+            │    Audio/Sink      (no media.class)      │
+            │    wiremix ✓       wiremix ignores       │
+            └──────────────────────────────────────────┘
+```
+
+eqtui uses the **EasyEffects pattern** to integrate into PipeWire without
+disrupting audio mixers like wiremix:
+
+1. **Virtual Null Sink** — A real PipeWire node (`media.class=Audio/Sink`) created
+   via the `support.null-audio-sink` adapter factory. Appears as "eqtui Equalizer" in
+   system sound settings and supports full `PortConfig` enumeration so mixers can
+   monitor it without errors.
+
+2. **Internal `pw_filter`** — A lightweight PipeWire filter with no `media.class`
+   that processes audio silently behind the scenes. Catches audio from the null
+   sink's monitor ports, applies the EQ chain, and outputs to the default sink.
+   Invisible to mixers so it never triggers PortConfig-related crashes.
+
+3. **Direct C FFI** — The filter and null sink use raw `pipewire_sys` / `libspa_sys`
+   bindings for capabilities not yet exposed by safe `pipewire-rs`.
 
 ## Prerequisites
 
-- **Linux** with [PipeWire](https://pipewire.org) running
-- A [Nerd Font](https://www.nerdfonts.com) for icons (optional, but recommended)
-- Rust toolchain if building from source
+- **Linux** with [PipeWire](https://pipewire.org) installed and running.
+- A [Nerd Font](https://www.nerdfonts.com) for interface icons (recommended).
+- Rust toolchain for building from source.
 
 ## Installation
 
-### Cargo (crates.io)
+### Cargo
 
 ```bash
 cargo install eqtui
 ```
 
-### Arch Linux (AUR)
-
-```bash
-paru -S eqtui-bin
-# or
-paru -S eqtui-git
-```
-
-### Build from source
+### Build from Source
 
 ```bash
 git clone https://github.com/SiputBiru/eqtui
 cd eqtui
 cargo build --release
-# binary at target/release/eqtui
+# Executable located at target/release/eqtui
 ```
 
-## Quick Start
+## Usage
+
+Start the application:
 
 ```bash
 eqtui
 ```
 
-Press `Tab` / `l` to switch panels. Press `q` to quit.
+### Interface Navigation
 
-## Keybindings
+- `Tab` / `l`: Cycle to the next panel.
+- `Shift+Tab` / `h`: Cycle to the previous panel.
+- `q` / `Ctrl+c`: Exit the application.
+- `Esc`: Return to Normal mode.
 
-### Global
+### Keybindings
 
-| Key | Action |
-|-----|--------|
-| `Tab` / `l` | Next panel |
-| `Shift+Tab` / `h` | Previous panel |
-| `q` / `Ctrl+c` | Quit |
-| `Esc` | Return to Normal mode |
-
-### EQ — Normal Mode
-
-| Key | Action |
-|-----|--------|
-| `j` / `k` / `↑` / `↓` | Next / previous band |
-| `h` / `l` / `←` / `→` | Next / previous column |
-| `a` | Add band below cursor |
-| `dd` | Delete selected band |
-| `gg` | Jump to first band |
-| `G` | Jump to last band |
-| `b` | Toggle EQ bypass |
-| `r` | Reset selected band |
-| `R` | Reset all bands |
-| `i` | Enter Insert mode |
-| `v` | Enter Visual mode |
-| `:` | Enter Command mode |
-| `Ctrl+a` | Import AutoEQ preset |
-
-### EQ — Insert Mode
-
-| Key | Action |
-|-----|--------|
-| `Enter` | Confirm, return to Normal |
-| `Esc` | Cancel, return to Normal |
-| `+` / `-` | Bump value ± step |
-
-### EQ — Visual Mode
-
-| Key | Action |
-|-----|--------|
-| `j` / `k` | Extend selection |
-| `d` | Delete selected bands |
-
-### EQ — Command Mode
-
-| Command | Action |
-|---------|--------|
-| `:w` | Save preset |
-| `:w my-preset` | Save as named preset |
-| `:q` | Quit |
-| `:flat` | Reset all bands to 0 dB |
-| `:graphic-eq` | Switch to graphic EQ mode |
+| Mode | Key | Action |
+|------|-----|--------|
+| **Normal** | `j` / `k` / `↑` / `↓` | Navigate bands |
+| | `h` / `l` / `←` / `→` | Navigate columns |
+| | `a` | Add new band |
+| | `dd` | Delete selected band |
+| | `b` | Toggle bypass |
+| | `r` / `R` | Reset band / Reset all |
+| | `Ctrl+a` | Import AutoEQ preset |
+| **Insert** | `Enter` / `Esc` | Confirm / Cancel changes |
+| | `+` / `-` | Adjust values |
+| **Visual** | `j` / `k` | Extend selection |
+| | `d` | Delete selection |
+| **Command** | `:w` | Save preset |
+| | `:flat` | Reset all bands to 0 dB |
 
 ## Configuration
 
-Config file at `~/.config/eqtui/config.toml`:
+Settings are managed via `~/.config/eqtui/config.toml`. Keybindings and layout preferences are configurable.
 
 ```toml
-# ~/.config/eqtui/config.toml
-
+# Example config.toml
 layout = "SpaceBetween"
 
 [keys.normal]
 add_band = "a"
-delete_band = "d"
-insert_mode = "i"
-command_mode = ":"
-visual_mode = "v"
 toggle_bypass = "b"
-
-[keys.insert]
-confirm = "Enter"
-cancel = "Esc"
-bump_up = "+"
-bump_down = "-"
 ```
 
 ## Roadmap
 
-| Phase | Status | Focus |
-|-------|--------|-------|
-| **0** | ✅ Complete | PipeWire connection, node listing TUI |
-| **1** | 🚧 Next | Equalizer engine + vim-mode TUI + config system |
-| **2** | ⬜ | AutoEQ integration (CSV/PEQ import, fuzzy search) |
-| **3** | ⬜ | More effects (compressor, gate, reverb…) + preset system + notifications |
-| **4** | ⬜ | Visualization (EQ curve graph, spectrum analyzer, level meters) + CLI mode |
-| **5** | ⬜ | Packaging (AUR, Nix, binary releases, CI/CD) |
+| Phase | Focus | Status |
+|-------|-------|--------|
+| **1** | Core Equalizer Engine & TUI | Complete |
+| **2A** | Virtual Null Sink | Complete |
+| **2B** | AutoEQ Integration | Planned |
+| **3** | Dynamic Preset System & Additional Effects | Planned |
+| **4** | Real-time Visualizations & Spectrum Analysis | Planned |
 
-See [ROADMAP.md](ROADMAP.md) for full details.
+## Contributing
+
+Community contributions are accepted. Pull requests or issue reports can be submitted via the GitHub repository.
 
 ## License
 
-MIT © [SiputBiru](mailto:hillsforrest03@gmail.com)
+[MIT](LICENSE) © SiputBiru

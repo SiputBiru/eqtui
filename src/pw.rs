@@ -193,6 +193,169 @@ impl FilterHandle {
     }
 }
 
+// Data passed to the null-sink proxy listener callbacks.
+// This Box is leaked into a raw pointer and freed only during shutdown.
+// The bound callback creates the initial equalizer filter once the
+// server-assigned global id arrives.
+struct NullSinkListenerData {
+    tx: mpsc::Sender<PwEvent>,
+    core_raw: *mut pipewire_sys::pw_core,
+    pipeline: Arc<Pipeline>,
+    filter_cell_ptr: *mut Cell<Option<FilterHandle>>,
+    filter_created: Cell<bool>,
+}
+
+// NullSinkHandle — holds the null-audio-sink proxy and all listener
+// resources created via pw_proxy_add_listener. Must be destroyed on the
+// PipeWire mainloop thread before the core is disconnected.
+struct NullSinkHandle {
+    proxy: *mut pipewire_sys::pw_proxy,
+    listener_ptr: *mut libspa_sys::spa_hook,
+    events_ptr: *mut pipewire_sys::pw_proxy_events,
+    data_ptr: *mut NullSinkListenerData,
+}
+
+impl NullSinkHandle {
+    /// Destroy the null-audio-sink proxy and all listener resources.
+    ///
+    /// # Safety
+    /// Must be called from the PipeWire mainloop thread before the core
+    /// is disconnected. All stored raw pointers must be valid (non-null)
+    /// or null (which are safely ignored).
+    unsafe fn destroy(self) {
+        // Safety: caller guarantees this runs on the mainloop thread
+        // while the core is still connected. pw_proxy_destroy frees the
+        // client-side proxy and, because object.linger is not set,
+        // destroys the server-side node as well.
+        unsafe {
+            if !self.proxy.is_null() {
+                pipewire_sys::pw_proxy_destroy(self.proxy);
+            }
+            // Free listener allocations in reverse order of dependency.
+            if !self.data_ptr.is_null() {
+                drop(Box::from_raw(self.data_ptr));
+            }
+            if !self.events_ptr.is_null() {
+                drop(Box::from_raw(self.events_ptr));
+            }
+            if !self.listener_ptr.is_null() {
+                drop(Box::from_raw(self.listener_ptr));
+            }
+        }
+    }
+}
+
+// Proxy listener callback — fires when the null-sink proxy is bound to a
+// server-side global id. This is how we learn the null sink's real node id
+// so the equalizer filter can be wired to it.
+//
+// Safety: called by PipeWire on the mainloop thread after the proxy is
+// bound. `data` is a valid pointer to a NullSinkListenerData Box that
+// outlives the callback (freed only at shutdown).
+unsafe extern "C" fn bound_cb(data: *mut c_void, global_id: u32) {
+    unsafe {
+        let nd = &*data.cast::<NullSinkListenerData>();
+
+        // Inform the TUI that the null sink is now live with its real id.
+        let _ = nd
+            .tx
+            .send(PwEvent::NullSinkCreated { module_id: global_id });
+
+        // Only create the initial filter once. Subsequent filter
+        // recreations happen through the PwCommand::SetTarget handler
+        // in the mainloop command channel.
+        if !nd.filter_created.get() {
+            nd.filter_created.set(true);
+            let handle = create_eq_filter(
+                nd.core_raw,
+                &nd.pipeline,
+                &nd.tx,
+                Some(global_id),
+            );
+            if let Some(h) = handle {
+                (*nd.filter_cell_ptr).set(Some(h));
+            }
+        }
+    }
+}
+
+// Create a virtual null-audio-sink node via the adapter factory.
+// This node exposes media.class=Audio/Sink, making it visible to
+// wiremix as a selectable output while passing audio through silently.
+//
+// Returns a handle for later cleanup on shutdown.
+fn create_null_sink(
+    core_raw: *mut pipewire_sys::pw_core,
+    tx: &mpsc::Sender<PwEvent>,
+) -> Option<NullSinkHandle> {
+    // Build properties for the adapter factory — these determine the
+    // node's identity and behaviour in the PipeWire graph.
+    let props = Props::new("factory.name", "support.null-audio-sink");
+    props.set("media.class", "Audio/Sink");
+    props.set("node.name", "eqtui");
+    props.set("node.description", "eqtui Equalizer");
+    props.set("audio.position", "FL,FR");
+    props.set("monitor.channel-volumes", "false");
+    props.set("monitor.passthrough", "true");
+    // Lowest session priority so the null sink does not steal the
+    // default-sink role from the user's real output device.
+    props.set("priority.session", "0");
+
+    let factory_cstr =
+        CString::new("adapter").expect("factory name should not contain null bytes");
+    let type_cstr =
+        CString::new("PipeWire:Interface:Node").expect("type string should not contain null bytes");
+
+    // Safety: core_raw is a valid pointer obtained from a live CoreRc on
+    // the PipeWire mainloop thread. pw_core is opaque in the bindings
+    // but its C layout begins with pw_proxy, which begins with
+    // spa_interface — the cast is therefore sound.
+    // All CString pointers remain live for the duration of the FFI call.
+    // props.into_raw() transfers ownership of the pw_properties into
+    // pw_core_create_object (PipeWire copies the dict internally).
+    let iface = core_raw as *mut libspa_sys::spa_interface;
+    let methods = unsafe { (*iface).cb.funcs as *const pipewire_sys::pw_core_methods };
+    let create_fn = match unsafe { (*methods).create_object } {
+        Some(f) => f,
+        None => {
+            let _ = tx.send(PwEvent::NullSinkError(
+                "core create_object method not available".into(),
+            ));
+            return None;
+        }
+    };
+
+    let proxy_ptr = unsafe {
+        create_fn(
+            (*iface).cb.data,
+            factory_cstr.as_ptr(),
+            type_cstr.as_ptr(),
+            pipewire_sys::PW_VERSION_NODE,
+            props.into_raw() as *const libspa_sys::spa_dict,
+            0,
+        )
+    };
+
+    if proxy_ptr.is_null() {
+        let _ = tx.send(PwEvent::NullSinkError(
+            "pw_core_create_object for null-audio-sink returned NULL".into(),
+        ));
+        return None;
+    }
+
+    // The returned void pointer is actually a pw_proxy.
+    // The bound_cb will learn the real (server-assigned) global id when the
+    // proxy is bound; we send NullSinkCreated from there, not here.
+    let proxy = proxy_ptr as *mut pipewire_sys::pw_proxy;
+
+    Some(NullSinkHandle {
+        proxy,
+        listener_ptr: ptr::null_mut(),
+        events_ptr: ptr::null_mut(),
+        data_ptr: ptr::null_mut(),
+    })
+}
+
 // Filter creation
 fn create_eq_filter(
     core_raw: *mut pipewire_sys::pw_core,
@@ -211,7 +374,6 @@ fn create_eq_filter(
     props.set("media.role", "DSP");
     props.set("node.name", "eqtui");
     props.set("node.description", "eqtui Equalizer");
-    props.set("node.autoconnect", "true");
     // Mark as virtual so WirePlumber doesn't auto-promote this filter to
     // the default sink, which would steal audio streams and disrupt other
     // PipeWire clients (e.g. wiremix) that are monitoring the graph.
@@ -368,8 +530,6 @@ fn create_eq_filter(
         pipewire_sys::pw_filter_set_active(filter, true);
     }
 
-    let _ = tx.send(PwEvent::NullSinkCreated { module_id: 0 });
-
     Some(FilterHandle {
         filter,
         port_in_l: in_left,
@@ -466,13 +626,80 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
 
     let core_raw = core.as_raw_ptr().cast::<pipewire_sys::pw_core>();
     let filter_cell: Cell<Option<FilterHandle>> = Cell::new(None);
+    let nullsink_cell: Cell<Option<NullSinkHandle>> = Cell::new(None);
 
-    match create_eq_filter(core_raw, &pipeline, &tx, None) {
-        Some(handle) => {
-            filter_cell.set(Some(handle));
+    // Create the virtual null-audio-sink BEFORE the equalizer filter.
+    // We attach a proxy-listener that fires when the proxy is bound to a
+    // server-side global id; that callback then creates the filter wired
+    // to the null sink's monitor ports. This ordering ensures wiremix can
+    // discover eqtui as a selectable Audio/Sink.
+    let nullsink_handle = create_null_sink(core_raw, &tx);
+
+    match nullsink_handle {
+        Some(mut handle) => {
+            // Heap-allocate listener data. This Box is leaked into a raw
+            // pointer and freed during shutdown (NullSinkHandle::destroy).
+            let listener_data = Box::new(NullSinkListenerData {
+                tx: tx.clone(),
+                core_raw,
+                pipeline: pipeline.clone(),
+                // Safety: filter_cell lives on the stack in run(), which
+                // outlives the mainloop (only quits on Terminate).
+                filter_cell_ptr: &filter_cell
+                    as *const Cell<Option<FilterHandle>>
+                    as *mut Cell<Option<FilterHandle>>,
+                filter_created: Cell::new(false),
+            });
+            let data_ptr = Box::into_raw(listener_data);
+
+            // Allocate spa_hook for the proxy listener.
+            let listener_box =
+                Box::new(unsafe { mem::zeroed::<libspa_sys::spa_hook>() });
+            let listener_ptr = Box::into_raw(listener_box);
+
+            // Set up pw_proxy_events with the bound callback.  When the
+            // null-sink proxy is bound, bound_cb reads the global id and
+            // creates the equalizer filter wired to it.
+            let mut events_box =
+                Box::new(unsafe { mem::zeroed::<pipewire_sys::pw_proxy_events>() });
+            events_box.version = pipewire_sys::PW_VERSION_PROXY_EVENTS;
+            events_box.bound = Some(bound_cb);
+            let events_ptr = Box::into_raw(events_box);
+
+            // Safety: proxy is non-null (create_null_sink guarantees this).
+            // listener_ptr and events_ptr point to freshly allocated,
+            // heap-stable memory that outlives the proxy (freed on destroy).
+            // data_ptr holds cloned/ref-counted resources valid for the
+            // mainloop lifetime.
+            unsafe {
+                pipewire_sys::pw_proxy_add_listener(
+                    handle.proxy,
+                    listener_ptr,
+                    events_ptr,
+                    data_ptr.cast::<c_void>(),
+                );
+            }
+
+            // Stash the listener pointers in the handle for cleanup.
+            handle.listener_ptr = listener_ptr;
+            handle.events_ptr = events_ptr;
+            handle.data_ptr = data_ptr;
+            nullsink_cell.set(Some(handle));
         }
         None => {
-            return;
+            let _ = tx.send(PwEvent::NullSinkError(
+                "failed to create null-audio-sink node".into(),
+            ));
+            // Fallback: create filter without a null sink target so the
+            // equalizer remains functional even without wiremix visibility.
+            match create_eq_filter(core_raw, &pipeline, &tx, None) {
+                Some(handle) => {
+                    filter_cell.set(Some(handle));
+                }
+                None => {
+                    return;
+                }
+            }
         }
     }
 
@@ -482,7 +709,22 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
 
     let _cmd_receiver = rx.attach(mainloop.loop_(), move |cmd| match cmd {
         PwCommand::Terminate => {
+            // Teardown order: deactivate/destroy filter first, then destroy the
+            // null-audio-sink. The filter consumer must be torn down before the
+            // source node to avoid dangling PipeWire references.
             if let Some(handle) = filter_cell.take() {
+                // Safety: running on the mainloop thread while the core is
+                // still connected. The filter pointer and its allocations
+                // are valid — FilterHandle::destroy deactivates, disconnects,
+                // and frees all resources.
+                unsafe {
+                    handle.destroy();
+                }
+            }
+            if let Some(handle) = nullsink_cell.take() {
+                // Safety: running on the mainloop thread while the core
+                // is still connected. pw_proxy_destroy frees the client-side
+                // proxy and destroys the server-side node.
                 unsafe {
                     handle.destroy();
                 }
@@ -490,8 +732,13 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
             mainloop_cmd.quit();
         }
         PwCommand::SetTarget { node_id } => {
-            // Tear down old filter
+            // Tear down old filter before creating a new one wired to the
+            // updated target device. The null sink persists — it is never
+            // recreated on target changes.
             if let Some(handle) = filter_cell.take() {
+                // Safety: running on the mainloop thread while the core
+                // is still connected. FilterHandle::destroy deactivates,
+                // disconnects, and frees all resources.
                 unsafe {
                     handle.destroy();
                 }
