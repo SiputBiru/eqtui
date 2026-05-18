@@ -18,11 +18,8 @@ const DEFAULT_SAMPLE_RATE: u32 = 48000;
 const DEFAULT_CHANNELS: u32 = 2;
 const DEFAULT_N_SAMPLES: u32 = 1024;
 
-// ---------------------------------------------------------------------------
 // Thin helpers for pw_properties — PipeWire copies strings internally, so
 // CString temporaries are safe to drop after each call.
-// ---------------------------------------------------------------------------
-
 pub(crate) struct Props(*mut pipewire_sys::pw_properties);
 
 impl Props {
@@ -60,10 +57,7 @@ impl Drop for Props {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Filter callbacks
-// ---------------------------------------------------------------------------
-
 struct FilterData {
     pipeline: Arc<Pipeline>,
     in_left: *mut c_void,
@@ -81,12 +75,10 @@ pub(crate) fn process_buffers(
     out_r: *mut f32,
     n_samples: usize,
 ) {
-    // Prevent panic: Check for null pointers
     if in_l.is_null() || in_r.is_null() || out_l.is_null() || out_r.is_null() {
         return;
     }
 
-    // Prevent panic: Check for proper f32 memory alignment
     let align = std::mem::align_of::<f32>();
     if !(in_l as usize).is_multiple_of(align)
         || !(in_r as usize).is_multiple_of(align)
@@ -157,10 +149,7 @@ pub(crate) fn state_name_for(s: pipewire_sys::pw_filter_state) -> &'static str {
     }
 }
 
-// ---------------------------------------------------------------------------
 // FilterHandle — bundles all pointers needed for teardown / recreation
-// ---------------------------------------------------------------------------
-
 #[allow(dead_code)]
 struct FilterHandle {
     filter: *mut pipewire_sys::pw_filter,
@@ -197,21 +186,31 @@ impl FilterHandle {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Filter creation — media.class=Audio/Sink makes eqtui a virtual output device
-// ---------------------------------------------------------------------------
-
+// Filter creation
 fn create_eq_filter(
     core_raw: *mut pipewire_sys::pw_core,
     pipeline: &Arc<Pipeline>,
     tx: &mpsc::Sender<PwEvent>,
     target_node_id: Option<u32>,
 ) -> Option<FilterHandle> {
-    // --- build properties ---
-    let props = Props::new("media.class", "Audio/Sink");
+    // Follow EasyEffects' pattern: do NOT set media.class on pw_filter nodes.
+    // Wiremix's monitor_node() only binds nodes with an exact media.class match
+    // on "Audio/Sink" / "Audio/Source" / "Stream/*".  Without media.class, the
+    // node is skipped entirely and wiremix never tries to enumerate PortConfig
+    // (which pw_filter nodes don't support), avoiding the crash:
+    //   "enum params id:11 (Spa:Enum:ParamId:PortConfig) failed"
+    let props = Props::new("media.type", "Audio");
+    props.set("media.category", "Duplex");
+    props.set("media.role", "DSP");
     props.set("node.name", "eqtui");
     props.set("node.description", "eqtui Equalizer");
     props.set("node.autoconnect", "true");
+    // Mark as virtual so WirePlumber doesn't auto-promote this filter to
+    // the default sink, which would steal audio streams and disrupt other
+    // PipeWire clients (e.g. wiremix) that are monitoring the graph.
+    props.set("node.virtual", "true");
+    // Lowest session priority – extra guard against becoming default.
+    props.set("priority.session", "0");
     if let Some(id) = target_node_id {
         props.set("node.target", &id.to_string());
     }
@@ -225,7 +224,6 @@ fn create_eq_filter(
         return None;
     }
 
-    // --- named ports ---
     let in_left = unsafe {
         let p = Props::new("port.name", "input_FL");
         p.set("audio.channel", "FL");
@@ -288,7 +286,6 @@ fn create_eq_filter(
         return None;
     }
 
-    // --- filter data (for callbacks) ---
     let filter_data = Box::new(FilterData {
         pipeline: pipeline.clone(),
         in_left,
@@ -299,7 +296,6 @@ fn create_eq_filter(
     });
     let filter_data_ptr = Box::into_raw(filter_data);
 
-    // --- listener (heap-allocated so address stays valid) ---
     let mut events = Box::new(unsafe { std::mem::zeroed::<pipewire_sys::pw_filter_events>() });
     events.version = pipewire_sys::PW_VERSION_FILTER_EVENTS;
     events.process = Some(process_cb);
@@ -317,7 +313,6 @@ fn create_eq_filter(
         );
     }
 
-    // --- SPA format negotiation ---
     let mut audio_info = spa::param::audio::AudioInfoRaw::new();
     audio_info.set_format(spa::param::audio::AudioFormat::F32LE);
     audio_info.set_rate(DEFAULT_SAMPLE_RATE);
@@ -365,8 +360,6 @@ fn create_eq_filter(
         pipewire_sys::pw_filter_set_active(filter, true);
     }
 
-    // Signal the TUI that our virtual sink is ready.
-    // The filter IS the virtual output (media.class=Audio/Sink).
     let _ = tx.send(PwEvent::NullSinkCreated { module_id: 0 });
 
     Some(FilterHandle {
@@ -380,10 +373,6 @@ fn create_eq_filter(
         events_ptr,
     })
 }
-
-// ---------------------------------------------------------------------------
-// Main entry point
-// ---------------------------------------------------------------------------
 
 pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pipeline>) {
     let mainloop = match MainLoopRc::new(None) {
@@ -418,7 +407,6 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
         }
     };
 
-    // --- node discovery ---
     let nodes: Rc<std::cell::RefCell<Vec<NodeInfo>>> = Rc::new(std::cell::RefCell::new(Vec::new()));
 
     let nodes_reg = nodes.clone();
@@ -468,7 +456,6 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
     });
     timer.update_timer(Some(Duration::from_millis(500)), None);
 
-    // --- create filter (it IS the virtual output device) ---
     let core_raw = core.as_raw_ptr().cast::<pipewire_sys::pw_core>();
     let filter_cell: Cell<Option<FilterHandle>> = Cell::new(None);
 
@@ -481,7 +468,6 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
         }
     }
 
-    // --- command channel ---
     let mainloop_cmd = mainloop.clone();
     let pipeline_cmd = pipeline.clone();
     let tx_cmd = tx.clone();
