@@ -492,17 +492,23 @@ fn create_eq_filter(
     position[1] = libspa_sys::SPA_AUDIO_CHANNEL_FR;
     audio_info.set_position(position);
 
-    let values: Vec<u8> = spa::pod::serialize::PodSerializer::serialize(
-        std::io::Cursor::new(Vec::new()),
-        &spa::pod::Value::Object(spa::pod::Object {
-            type_: libspa_sys::SPA_TYPE_OBJECT_Format,
-            id: libspa_sys::SPA_PARAM_EnumFormat,
-            properties: audio_info.into(),
-        }),
-    )
-    .expect("SPA pod serialization failed — invalid audio format params")
-    .0
-    .into_inner();
+    let values: Vec<u8> =
+        match spa::pod::serialize::PodSerializer::serialize(
+            std::io::Cursor::new(Vec::new()),
+            &spa::pod::Value::Object(spa::pod::Object {
+                type_: libspa_sys::SPA_TYPE_OBJECT_Format,
+                id: libspa_sys::SPA_PARAM_EnumFormat,
+                properties: audio_info.into(),
+            }),
+        ) {
+            Ok(v) => v.0.into_inner(),
+            Err(e) => {
+                let _ = tx.send(PwEvent::Error(format!(
+                    "SPA pod serialization failed: {e}"
+                )));
+                return None;
+            }
+        };
 
     let Some(pod_ref) = spa::pod::Pod::from_bytes(&values) else {
         let _ = tx.send(PwEvent::Error("pod from_bytes failed".into()));

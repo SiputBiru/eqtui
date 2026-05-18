@@ -47,7 +47,9 @@ pub fn handle(key: KeyEvent, app: &mut App) {
                     }
                     _ => {}
                 }
-                app.sync_bands();
+                if let Err(e) = app.sync_bands() {
+                    tracing::error!(%e, "Failed to sync EQ bands");
+                }
             }
             app.mode = Mode::Normal;
         }

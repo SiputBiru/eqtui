@@ -93,7 +93,9 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
                 EqBand { frequency: freq, gain, q, filter_type: ftype },
             );
             app.eq_band_selected = insert_at;
-            app.sync_bands();
+            if let Err(e) = app.sync_bands() {
+                tracing::error!(%e, "Failed to sync EQ bands");
+            }
         }
         KeyCode::Char('d') => {
             if app.last_key == Some('d') && !app.eq_bands.is_empty() {
@@ -102,7 +104,9 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
                     app.eq_band_selected = app.eq_bands.len().saturating_sub(1);
                 }
                 app.last_key = None;
-                app.sync_bands();
+                if let Err(e) = app.sync_bands() {
+                    tracing::error!(%e, "Failed to sync EQ bands");
+                }
                 return;
             }
         }
@@ -149,7 +153,9 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
                 let b = &mut app.eq_bands[app.eq_band_selected];
                 b.gain = 0.0;
                 b.q = 1.0;
-                app.sync_bands();
+                if let Err(e) = app.sync_bands() {
+                    tracing::error!(%e, "Failed to sync EQ bands");
+                }
             }
         }
         KeyCode::Char('R') => {
@@ -157,7 +163,9 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
                 b.gain = 0.0;
                 b.q = 1.0;
             }
-            app.sync_bands();
+            if let Err(e) = app.sync_bands() {
+                tracing::error!(%e, "Failed to sync EQ bands");
+            }
         }
         KeyCode::Char('+') | KeyCode::Char('=') => {
             if app.eq_bands.is_empty() { return; }
@@ -175,7 +183,9 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
                 }
                 _ => {}
             }
-            app.sync_bands();
+            if let Err(e) = app.sync_bands() {
+                tracing::error!(%e, "Failed to sync EQ bands");
+            }
         }
         KeyCode::Char('-') => {
             if app.eq_bands.is_empty() { return; }
@@ -193,7 +203,9 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
                 }
                 _ => {}
             }
-            app.sync_bands();
+            if let Err(e) = app.sync_bands() {
+                tracing::error!(%e, "Failed to sync EQ bands");
+            }
         }
         _ => {}
     }

@@ -20,6 +20,9 @@ ratatui = { version = "0.30", features = ["serde"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 toml = "1.1.2"
+tracing = "0.1.44"
+tracing-error = "0.2.1"
+tracing-subscriber = "0.3.23"
 tui-input = "0.15.3"
 
 [lints.clippy]

@@ -1,5 +1,8 @@
 use std::sync::RwLock;
 
+use color_eyre::eyre::eyre;
+
+use crate::AppResult;
 use crate::effects::EffectPlugin;
 use crate::state::{EqBand, FilterType};
 
@@ -37,15 +40,25 @@ impl Equalizer {
         }
     }
 
-    pub fn set_bands(&self, bands: &[EqBand], sample_rate: f32) {
+    pub fn set_bands(&self, bands: &[EqBand], sample_rate: f32) -> AppResult<()> {
         let coeffs: Vec<BiquadCoeffs> = bands
             .iter()
             .map(|b| biquad_coefficients(b, sample_rate))
             .collect();
         let len = coeffs.len();
-        *self.bands.write().expect("EQ RwLock poisoned") = coeffs;
-        *self.states_l.write().expect("EQ RwLock poisoned") = vec![BiquadState::default(); len];
-        *self.states_r.write().expect("EQ RwLock poisoned") = vec![BiquadState::default(); len];
+        *self
+            .bands
+            .write()
+            .map_err(|e| eyre!("EQ RwLock poisoned: {e}"))? = coeffs;
+        *self
+            .states_l
+            .write()
+            .map_err(|e| eyre!("EQ RwLock poisoned: {e}"))? = vec![BiquadState::default(); len];
+        *self
+            .states_r
+            .write()
+            .map_err(|e| eyre!("EQ RwLock poisoned: {e}"))? = vec![BiquadState::default(); len];
+        Ok(())
     }
 }
 
@@ -86,7 +99,8 @@ mod tests {
         eq.set_bands(
             &[EqBand { frequency: 1000.0, gain: 0.0, q: 1.0, filter_type: FilterType::Peak }],
             48000.0,
-        );
+        )
+        .unwrap();
         let n = 1024;
         let input = vec![0.5_f32; n];
         let mut lo = vec![0.0_f32; n];
@@ -101,7 +115,8 @@ mod tests {
         eq.set_bands(
             &[EqBand { frequency: 1000.0, gain: 6.0, q: 1.0, filter_type: FilterType::Peak }],
             48000.0,
-        );
+        )
+        .unwrap();
         let n = 4096;
         let freq = 1000.0;
         let sr = 48000.0;
@@ -120,7 +135,8 @@ mod tests {
         eq.set_bands(
             &[EqBand { frequency: 1000.0, gain: -6.0, q: 1.0, filter_type: FilterType::Peak }],
             48000.0,
-        );
+        )
+        .unwrap();
         let n = 4096;
         let freq = 1000.0;
         let sr = 48000.0;
@@ -141,7 +157,7 @@ mod tests {
             EqBand { frequency: 1000.0, gain: -4.0, q: 1.0, filter_type: FilterType::Peak },
             EqBand { frequency: 8000.0, gain: 2.0, q: 0.7, filter_type: FilterType::HighShelf },
         ];
-        eq.set_bands(&bands, 48000.0);
+        eq.set_bands(&bands, 48000.0).unwrap();
         let n = 512;
         let input = vec![0.3_f32; n];
         let mut lo = vec![0.0_f32; n];
@@ -157,7 +173,8 @@ mod tests {
         eq.set_bands(
             &[EqBand { frequency: 200.0, gain: 6.0, q: 0.71, filter_type: FilterType::LowShelf }],
             48000.0,
-        );
+        )
+        .unwrap();
         let n = 4096;
         let freq = 50.0;
         let sr = 48000.0;
@@ -185,21 +202,34 @@ impl EffectPlugin for Equalizer {
     ) {
         let n = left_in.len().min(left_out.len());
 
-        if *self.bypass.read().expect("EQ RwLock poisoned") {
+        let Ok(bypass) = self.bypass.read() else {
+            tracing::error!("EQ RwLock poisoned (bypass) in audio thread");
+            return;
+        };
+        if *bypass {
             left_out[..n].copy_from_slice(&left_in[..n]);
             right_out[..n].copy_from_slice(&right_in[..n]);
             return;
         }
 
-        let bands = self.bands.read().expect("EQ RwLock poisoned");
+        let Ok(bands) = self.bands.read() else {
+            tracing::error!("EQ RwLock poisoned (bands) in audio thread");
+            return;
+        };
         if bands.is_empty() {
             left_out[..n].copy_from_slice(&left_in[..n]);
             right_out[..n].copy_from_slice(&right_in[..n]);
             return;
         }
 
-        let mut states_l = self.states_l.write().expect("EQ RwLock poisoned");
-        let mut states_r = self.states_r.write().expect("EQ RwLock poisoned");
+        let Ok(mut states_l) = self.states_l.write() else {
+            tracing::error!("EQ RwLock poisoned (states_l) in audio thread");
+            return;
+        };
+        let Ok(mut states_r) = self.states_r.write() else {
+            tracing::error!("EQ RwLock poisoned (states_r) in audio thread");
+            return;
+        };
 
         for i in 0..n {
             let mut l = left_in[i];
@@ -233,19 +263,35 @@ impl EffectPlugin for Equalizer {
     }
 
     fn bypass(&self) -> bool {
-        *self.bypass.read().expect("EQ RwLock poisoned")
+        self.bypass.read().map_or_else(
+            |e| {
+                tracing::error!(%e, "EQ RwLock poisoned (bypass)");
+                false
+            },
+            |b| *b,
+        )
     }
 
     fn set_bypass(&self, bypass: bool) {
-        *self.bypass.write().expect("EQ RwLock poisoned") = bypass;
+        if let Err(e) = self.bypass.write().map(|mut b| *b = bypass) {
+            tracing::error!(%e, "EQ RwLock poisoned (set_bypass)");
+        }
     }
 
     fn reset(&self) {
-        for s in self.states_l.write().expect("EQ RwLock poisoned").iter_mut() {
-            *s = BiquadState::default();
+        if let Ok(mut states) = self.states_l.write() {
+            for s in states.iter_mut() {
+                *s = BiquadState::default();
+            }
+        } else {
+            tracing::error!("EQ RwLock poisoned (states_l) in reset");
         }
-        for s in self.states_r.write().expect("EQ RwLock poisoned").iter_mut() {
-            *s = BiquadState::default();
+        if let Ok(mut states) = self.states_r.write() {
+            for s in states.iter_mut() {
+                *s = BiquadState::default();
+            }
+        } else {
+            tracing::error!("EQ RwLock poisoned (states_r) in reset");
         }
     }
 }

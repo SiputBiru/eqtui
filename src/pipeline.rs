@@ -1,5 +1,8 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+use color_eyre::eyre::Context;
+
+use crate::AppResult;
 use crate::effects::EffectPlugin;
 use crate::effects::equalizer::Equalizer;
 use crate::state::EqBand;
@@ -64,8 +67,10 @@ impl Pipeline {
         )
     }
 
-    pub fn set_bands(&self, bands: Vec<EqBand>, sample_rate: f32) {
-        self.eq.set_bands(&bands, sample_rate);
+    pub fn set_bands(&self, bands: Vec<EqBand>, sample_rate: f32) -> AppResult<()> {
+        self.eq
+            .set_bands(&bands, sample_rate)
+            .wrap_err("Pipeline failed to set EQ bands")
     }
 
     pub fn set_bypass(&self, bypass: bool) {
@@ -104,7 +109,7 @@ mod tests {
             q: 1.0,
             filter_type: FilterType::Peak,
         }];
-        p.set_bands(bands, 48000.0);
+        p.set_bands(bands, 48000.0).unwrap();
 
         let input = vec![0.3_f32; 256];
         let mut lo = vec![0.0_f32; 256];

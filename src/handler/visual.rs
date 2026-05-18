@@ -26,7 +26,9 @@ pub fn handle(key: KeyEvent, app: &mut App) {
                 if app.eq_band_selected >= app.eq_bands.len() {
                     app.eq_band_selected = app.eq_bands.len().saturating_sub(1);
                 }
-                app.sync_bands();
+                if let Err(e) = app.sync_bands() {
+                    tracing::error!(%e, "Failed to sync EQ bands");
+                }
                 app.mode = Mode::Normal;
             }
         }

@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use tui_input::Input;
 
+use crate::AppResult;
 use crate::config::Config;
 use crate::pipeline::Pipeline;
 use crate::state::{EqBand, NodeInfo, PwEvent};
@@ -134,10 +135,10 @@ impl App {
                 self.null_sink_module_id = Some(module_id);
             }
             PwEvent::NullSinkError(e) => {
-                eprintln!("Null sink error: {e}");
+                tracing::error!(%e, "Null sink error");
             }
             PwEvent::Error(e) => {
-                eprintln!("PW error: {e}");
+                tracing::error!(%e, "PW error");
             }
         }
     }
@@ -146,9 +147,9 @@ impl App {
         self.running = false;
     }
 
-    pub fn sync_bands(&self) {
+    pub fn sync_bands(&self) -> AppResult<()> {
         self.pipeline
-            .set_bands(self.eq_bands.clone(), 48000.0);
+            .set_bands(self.eq_bands.clone(), 48000.0)
     }
 }
 

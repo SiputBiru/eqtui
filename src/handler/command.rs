@@ -36,7 +36,9 @@ fn exec(cmd: &str, app: &mut App) {
             for b in &mut app.eq_bands {
                 b.gain = 0.0;
             }
-            app.sync_bands();
+            if let Err(e) = app.sync_bands() {
+                tracing::error!(%e, "Failed to sync EQ bands");
+            }
         }
         Some("bypass") => {
             app.eq_bypass = !app.eq_bypass;
@@ -52,7 +54,9 @@ fn exec(cmd: &str, app: &mut App) {
                 q: 1.0,
                 filter_type: FilterType::Peak,
             });
-            app.sync_bands();
+            if let Err(e) = app.sync_bands() {
+                tracing::error!(%e, "Failed to sync EQ bands");
+            }
         }
         _ => {}
     }

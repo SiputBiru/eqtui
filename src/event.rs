@@ -10,7 +10,8 @@ use std::time::{Duration, Instant};
 use crate::AppResult;
 use crossterm::event::{self, Event as CrosstermEvent, KeyEventKind};
 
-const TICK_FPS: f64 = 30.0;
+// const TICK_FPS: f64 = 30.0;
+const TICK_FPS: f64 = 90.0;
 
 #[derive(Clone, Debug)]
 pub enum Event {
@@ -38,6 +39,12 @@ impl EventHandler {
     }
 }
 
+impl Default for EventHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 struct EventThread {
     sender: mpsc::Sender<Event>,
 }
@@ -55,17 +62,17 @@ impl EventThread {
             let timeout = tick_interval.saturating_sub(last_tick.elapsed());
             if timeout == Duration::ZERO {
                 last_tick = Instant::now();
-                let _ = self.sender.send(Event::Tick);
+                self.sender.send(Event::Tick)?;
             }
 
             if event::poll(timeout)? {
                 let event = event::read()?;
                 match event {
                     CrosstermEvent::Key(key) if key.kind == KeyEventKind::Press => {
-                        let _ = self.sender.send(Event::Key(key));
+                        self.sender.send(Event::Key(key))?;
                     }
                     CrosstermEvent::Resize(w, h) => {
-                        let _ = self.sender.send(Event::Resize(w, h));
+                        self.sender.send(Event::Resize(w, h))?;
                     }
                     _ => {}
                 }

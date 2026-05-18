@@ -1,9 +1,11 @@
-use std::io::{self, Write};
+use std::io;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
 
 use pipewire::channel;
+use tracing_error::ErrorLayer;
+use tracing_subscriber::prelude::*;
 
 use eqtui::{
     AppResult,
@@ -19,12 +21,28 @@ use eqtui::{
 use ratatui::backend::CrosstermBackend;
 
 fn main() -> AppResult<()> {
-    let mut log = std::fs::File::create("/tmp/eqtui.log")
-        .expect("failed to create /tmp/eqtui.log — check /tmp is writable");
-    writeln!(log, "Starting eqtui...")
-        .expect("log write failed");
+    let log_dir = dirs::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+        .join("eqtui");
+
+    std::fs::create_dir_all(&log_dir)?;
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_dir.join("eqtui.log"))?;
+
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(std::sync::Mutex::new(log_file)),
+        )
+        .with(ErrorLayer::default())
+        .init();
 
     color_eyre::install()?;
+
+    tracing::info!("Starting eqtui...");
 
     let config = Arc::new(Config::new(None));
     let pipeline = Arc::new(Pipeline::new(48000.0));
@@ -32,35 +50,30 @@ fn main() -> AppResult<()> {
     let (to_tui, from_pw) = mpsc::channel::<PwEvent>();
     let (to_pw, from_tui) = channel::channel::<PwCommand>();
 
-    writeln!(log, "Spawning PW thread...")
-        .expect("log write failed");
+    tracing::info!("Spawning PW thread...");
     let pipeline_pw = pipeline.clone();
     let pw_handle = thread::spawn(move || {
         pw::run(to_tui, from_tui, pipeline_pw);
     });
 
-    writeln!(log, "Creating Backend...")
-        .expect("log write failed");
+    tracing::info!("Creating Backend...");
     let backend = CrosstermBackend::new(io::stdout());
-    writeln!(log, "Creating Terminal...")
-        .expect("log write failed");
+
+    tracing::info!("Creating Terminal...");
     let terminal = ratatui::Terminal::new(backend)?;
-    writeln!(log, "Creating EventHandler...")
-        .expect("log write failed");
+
+    tracing::info!("Creating EventHandler...");
     let events = EventHandler::new();
-    writeln!(log, "Creating Tui struct...")
-        .expect("log write failed");
+
+    tracing::info!("Creating Tui struct...");
     let mut tui = Tui::new(terminal, events);
 
-    writeln!(log, "Calling tui.init()...")
-        .expect("log write failed");
+    tracing::info!("Calling tui.init()...");
     tui.init()?;
-    writeln!(log, "TUI initialized.")
-        .expect("log write failed");
+    tracing::info!("TUI initialized.");
 
     let mut app = App::new(config, pipeline);
-    writeln!(log, "App created. Entering main loop...")
-        .expect("log write failed");
+    tracing::info!("App created. Entering main loop...");
 
     while app.running {
         while let Ok(event) = from_pw.try_recv() {
@@ -70,8 +83,11 @@ fn main() -> AppResult<()> {
         match tui.events.next()? {
             eqtui::event::Event::Tick => app.tick(),
             eqtui::event::Event::Key(key) => {
-                if let Some(cmd) = handler::dispatch(key, &mut app) {
-                    let _ = to_pw.send(cmd);
+                if let Some(cmd) = handler::dispatch(key, &mut app)
+                    && to_pw.send(cmd).is_err()
+                {
+                    tracing::error!("PipeWire thread disconnected; shutting down");
+                    app.running = false;
                 }
             }
             eqtui::event::Event::Resize(_, _) => {}
@@ -82,8 +98,14 @@ fn main() -> AppResult<()> {
 
     tui.exit()?;
 
-    let _ = to_pw.send(PwCommand::Terminate);
-    pw_handle.join().ok();
+    if to_pw.send(PwCommand::Terminate).is_err() {
+        tracing::warn!("Pipewire thread already terminated before shutdown signal");
+    }
+
+    if let Err(panic) = pw_handle.join() {
+        tracing::error!("PipeWire thread panicked");
+        std::panic::resume_unwind(panic);
+    }
 
     Ok(())
 }
