@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::PathBuf;
 
 use ratatui::layout::Flex;
@@ -96,7 +97,7 @@ impl Config {
                 .join("config.toml"),
         );
 
-        match std::fs::read_to_string(&path) {
+        match fs::read_to_string(&path) {
             Ok(content) => toml::from_str(&content).unwrap_or_default(),
             Err(_) => Self::default(),
         }

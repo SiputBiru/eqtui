@@ -1,7 +1,10 @@
 use std::cell::Cell;
 use std::ffi::CString;
+use std::mem;
 use std::os::raw::{c_char, c_void};
+use std::ptr;
 use std::rc::Rc;
+use std::slice;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::Duration;
@@ -27,7 +30,7 @@ impl Props {
         let k = CString::new(key).unwrap();
         let v = CString::new(val).unwrap();
         let p = unsafe {
-            pipewire_sys::pw_properties_new(k.as_ptr(), v.as_ptr(), std::ptr::null::<c_char>())
+            pipewire_sys::pw_properties_new(k.as_ptr(), v.as_ptr(), ptr::null::<c_char>())
         };
         Self(p)
     }
@@ -42,7 +45,7 @@ impl Props {
 
     pub(crate) fn into_raw(self) -> *mut pipewire_sys::pw_properties {
         let p = self.0;
-        std::mem::forget(self);
+        mem::forget(self);
         p
     }
 }
@@ -79,7 +82,7 @@ pub(crate) fn process_buffers(
         return;
     }
 
-    let align = std::mem::align_of::<f32>();
+    let align = mem::align_of::<f32>();
     if !(in_l as usize).is_multiple_of(align)
         || !(in_r as usize).is_multiple_of(align)
         || !(out_l as usize).is_multiple_of(align)
@@ -88,10 +91,10 @@ pub(crate) fn process_buffers(
         return;
     }
 
-    let left_in = unsafe { std::slice::from_raw_parts(in_l, n_samples) };
-    let right_in = unsafe { std::slice::from_raw_parts(in_r, n_samples) };
-    let left_out = unsafe { std::slice::from_raw_parts_mut(out_l, n_samples) };
-    let right_out = unsafe { std::slice::from_raw_parts_mut(out_r, n_samples) };
+    let left_in = unsafe { slice::from_raw_parts(in_l, n_samples) };
+    let right_in = unsafe { slice::from_raw_parts(in_r, n_samples) };
+    let left_out = unsafe { slice::from_raw_parts_mut(out_l, n_samples) };
+    let right_out = unsafe { slice::from_raw_parts_mut(out_r, n_samples) };
 
     pipeline.process(left_in, right_in, left_out, right_out);
 }
@@ -234,7 +237,7 @@ fn create_eq_filter(
             pipewire_sys::pw_filter_port_flags_PW_FILTER_PORT_FLAG_MAP_BUFFERS,
             0,
             p.into_raw(),
-            std::ptr::null_mut(),
+            ptr::null_mut(),
             0,
         )
     };
@@ -248,7 +251,7 @@ fn create_eq_filter(
             pipewire_sys::pw_filter_port_flags_PW_FILTER_PORT_FLAG_MAP_BUFFERS,
             0,
             p.into_raw(),
-            std::ptr::null_mut(),
+            ptr::null_mut(),
             0,
         )
     };
@@ -262,7 +265,7 @@ fn create_eq_filter(
             pipewire_sys::pw_filter_port_flags_PW_FILTER_PORT_FLAG_MAP_BUFFERS,
             0,
             p.into_raw(),
-            std::ptr::null_mut(),
+            ptr::null_mut(),
             0,
         )
     };
@@ -276,7 +279,7 @@ fn create_eq_filter(
             pipewire_sys::pw_filter_port_flags_PW_FILTER_PORT_FLAG_MAP_BUFFERS,
             0,
             p.into_raw(),
-            std::ptr::null_mut(),
+            ptr::null_mut(),
             0,
         )
     };
@@ -296,13 +299,13 @@ fn create_eq_filter(
     });
     let filter_data_ptr = Box::into_raw(filter_data);
 
-    let mut events = Box::new(unsafe { std::mem::zeroed::<pipewire_sys::pw_filter_events>() });
+    let mut events = Box::new(unsafe { mem::zeroed::<pipewire_sys::pw_filter_events>() });
     events.version = pipewire_sys::PW_VERSION_FILTER_EVENTS;
     events.process = Some(process_cb);
     events.state_changed = Some(state_changed_cb);
     let events_ptr = Box::into_raw(events);
 
-    let listener_box = Box::new(unsafe { std::mem::zeroed::<libspa_sys::spa_hook>() });
+    let listener_box = Box::new(unsafe { mem::zeroed::<libspa_sys::spa_hook>() });
     let listener_ptr = Box::into_raw(listener_box);
     unsafe {
         pipewire_sys::pw_filter_add_listener(
@@ -339,7 +342,7 @@ fn create_eq_filter(
         return None;
     };
 
-    let pod_ptr = std::ptr::from_ref::<spa::pod::Pod>(pod_ref).cast::<libspa_sys::spa_pod>();
+    let pod_ptr = ptr::from_ref::<spa::pod::Pod>(pod_ref).cast::<libspa_sys::spa_pod>();
     let mut params = [pod_ptr];
 
     let ret = unsafe {
@@ -530,10 +533,10 @@ mod tests {
         // Should return early and not panic
         process_buffers(
             &pipeline,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
             1024,
         );
     }

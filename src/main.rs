@@ -1,5 +1,9 @@
+use std::io::{self, Write};
 use std::sync::Arc;
 use std::sync::mpsc;
+use std::thread;
+
+use pipewire::channel;
 
 use eqtui::{
     AppResult,
@@ -8,13 +12,13 @@ use eqtui::{
     event::EventHandler,
     handler,
     pipeline::Pipeline,
+    pw,
     state::{PwCommand, PwEvent},
-    tui::Tui,
+    tui::{self, Tui},
 };
 use ratatui::backend::CrosstermBackend;
 
 fn main() -> AppResult<()> {
-    use std::io::Write;
     let mut log = std::fs::File::create("/tmp/eqtui.log").unwrap();
     writeln!(log, "Starting eqtui...").unwrap();
 
@@ -24,16 +28,16 @@ fn main() -> AppResult<()> {
     let pipeline = Arc::new(Pipeline::new(48000.0));
 
     let (to_tui, from_pw) = mpsc::channel::<PwEvent>();
-    let (to_pw, from_tui) = pipewire::channel::channel::<PwCommand>();
+    let (to_pw, from_tui) = channel::channel::<PwCommand>();
 
     writeln!(log, "Spawning PW thread...").unwrap();
     let pipeline_pw = pipeline.clone();
-    let pw_handle = std::thread::spawn(move || {
-        eqtui::pw::run(to_tui, from_tui, pipeline_pw);
+    let pw_handle = thread::spawn(move || {
+        pw::run(to_tui, from_tui, pipeline_pw);
     });
 
     writeln!(log, "Creating Backend...").unwrap();
-    let backend = CrosstermBackend::new(std::io::stdout());
+    let backend = CrosstermBackend::new(io::stdout());
     writeln!(log, "Creating Terminal...").unwrap();
     let terminal = ratatui::Terminal::new(backend)?;
     writeln!(log, "Creating EventHandler...").unwrap();
@@ -63,7 +67,7 @@ fn main() -> AppResult<()> {
             eqtui::event::Event::Resize(_, _) => {}
         }
 
-        tui.draw(|frame| eqtui::tui::render(&app, frame))?;
+        tui.draw(|frame| tui::render(&app, frame))?;
     }
 
     tui.exit()?;
