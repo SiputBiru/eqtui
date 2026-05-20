@@ -604,27 +604,30 @@ fn create_monitor_links(out_node_id: u32, in_node_id: u32) {
         let out_spec = format!("{out_node_id}:{out_port}");
         let in_spec = format!("{in_node_id}:{in_port}");
 
-        // Skip if the link already exists (e.g. left over from a previous
-        // run that didn't tear down cleanly).  This avoids the noisy
-        // "failed to link ports: File exists" error from pw-link.
-        if link_exists(&out_spec, &in_spec) {
-            tracing::debug!(%out_spec, %in_spec, "Monitor link already exists, skipping");
-            continue;
-        }
-
         tracing::info!(%out_spec, %in_spec, "Calling pw-link for monitor link");
 
-        let status = std::process::Command::new("pw-link")
+        let output = std::process::Command::new("pw-link")
             .arg(&out_spec)
             .arg(&in_spec)
-            .status();
+            .output();
 
-        match status {
-            Ok(s) if s.success() => {
+        match output {
+            Ok(o) if o.status.success() => {
                 tracing::info!(%out_spec, %in_spec, "pw-link monitor success");
             }
-            Ok(s) => {
-                tracing::error!(%out_spec, %in_spec, "pw-link monitor failed with status: {s}");
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                // "File exists" (EEXIST) means the link is already present —
+                // harmless.  Log at debug level to keep the terminal quiet.
+                if stderr.contains("File exists") {
+                    tracing::debug!(%out_spec, %in_spec, "Monitor link already exists");
+                } else {
+                    tracing::error!(
+                        %out_spec, %in_spec,
+                        "pw-link monitor failed: {}",
+                        stderr.trim()
+                    );
+                }
             }
             Err(e) => {
                 tracing::error!(%out_spec, %in_spec, "failed to execute pw-link: {e}");
@@ -642,25 +645,28 @@ fn create_device_output_links(filter_id: u32, device_id: u32) {
         let out_spec = format!("{filter_id}:{out_port}");
         let in_spec = format!("{device_id}:{in_port}");
 
-        // Skip if the link already exists to avoid the "File exists" error.
-        if link_exists(&out_spec, &in_spec) {
-            tracing::debug!(%out_spec, %in_spec, "Output link already exists, skipping");
-            continue;
-        }
-
         tracing::info!(%out_spec, %in_spec, "Calling pw-link for output link");
 
-        let status = std::process::Command::new("pw-link")
+        let output = std::process::Command::new("pw-link")
             .arg(&out_spec)
             .arg(&in_spec)
-            .status();
+            .output();
 
-        match status {
-            Ok(s) if s.success() => {
+        match output {
+            Ok(o) if o.status.success() => {
                 tracing::info!(%out_spec, %in_spec, "pw-link output success");
             }
-            Ok(s) => {
-                tracing::error!(%out_spec, %in_spec, "pw-link output failed with status: {s}");
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                if stderr.contains("File exists") {
+                    tracing::debug!(%out_spec, %in_spec, "Output link already exists");
+                } else {
+                    tracing::error!(
+                        %out_spec, %in_spec,
+                        "pw-link output failed: {}",
+                        stderr.trim()
+                    );
+                }
             }
             Err(e) => {
                 tracing::error!(%out_spec, %in_spec, "failed to execute pw-link: {e}");
@@ -698,38 +704,6 @@ fn remove_device_output_links(filter_id: u32, device_id: u32) {
             }
         }
     }
-}
-
-/// Check whether a `PipeWire` link already exists between two ports by
-/// parsing `pw-link -l` output.  Returns `true` if a link from `out_spec`
-/// to `in_spec` is already present in the graph.
-fn link_exists(out_spec: &str, in_spec: &str) -> bool {
-    let Ok(output) = std::process::Command::new("pw-link")
-        .arg("-l")
-        .output()
-    else {
-        return false;
-    };
-
-    let text = String::from_utf8_lossy(&output.stdout);
-
-    // pw-link -l output lists each link in both directions:
-    //   port_A
-    //     |-> port_B          (A is the output)
-    //     |<- port_B          (B is the output)
-    // We scan for a line matching out_spec followed by a line
-    // containing "|->" and in_spec.
-    let mut lines = text.lines();
-    while let Some(line) = lines.next() {
-        if line.trim() == out_spec {
-            if let Some(next_line) = lines.next() {
-                if next_line.trim().starts_with("|->") && next_line.contains(in_spec) {
-                    return true;
-                }
-            }
-        }
-    }
-    false
 }
 
 /// Check whether any `PipeWire` link routes audio INTO the null sink's

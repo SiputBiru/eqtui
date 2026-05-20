@@ -68,30 +68,27 @@ where
 pub fn render(app: &App, frame: &mut ratatui::Frame) {
     let area = frame.area();
 
-    let [main_content, hint_area] = Layout::vertical([
-        Constraint::Fill(1),
-        Constraint::Length(1),
-    ])
-    .margin(1)
-    .areas(area);
+    let [main_content, hint_area] = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)])
+        .margin(1)
+        .areas(area);
 
-    let [sidebar_area, main_view_area] = Layout::horizontal([
-        Constraint::Percentage(35),
-        Constraint::Percentage(65),
-    ]).areas(main_content);
+    let [sidebar_area, main_view_area] =
+        Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)])
+            .areas(main_content);
 
     let [devices_area, bands_area, monitoring_area] = Layout::vertical([
         Constraint::Fill(2),
         Constraint::Fill(3),
         Constraint::Length(8),
-    ]).areas(sidebar_area);
+    ])
+    .areas(sidebar_area);
 
     // Render components
     devices::render(app, frame, devices_area);
     eq_table::render(app, frame, bands_area);
     status::render_monitoring(app, frame, monitoring_area);
     status::render_hints(app, frame, hint_area);
-    
+
     // Right Pane (Detail)
     graph::render(app, frame, main_view_area);
 }
