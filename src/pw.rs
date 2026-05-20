@@ -996,9 +996,12 @@ mod tests {
     #[test]
     fn test_process_buffers_alignment_checks() {
         let pipeline = Pipeline::new(48000.0);
-        // Create misaligned pointer by using an odd address
-        let misaligned = 0x0123_4567 as *mut f32;
-        let valid = 0x0123_4568 as *mut f32; // assuming 4-byte align is met by 8
+        // Create misaligned pointer by using an odd address.
+        // Use without_provenance_mut (Strict Provenance) — these are
+        // synthetic pointers only used for alignment checking, so they
+        // don't need real provenance.
+        let misaligned = ptr::without_provenance_mut::<f32>(0x0123_4567);
+        let valid = ptr::without_provenance_mut::<f32>(0x0123_4568); // assuming 4-byte align is met by 8
         process_buffers(&pipeline, misaligned, valid, valid, valid, 1024);
     }
 }
