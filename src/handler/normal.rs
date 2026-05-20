@@ -205,6 +205,10 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
     };
 }
 
+fn handle_command_bar(_key: KeyEvent, app: &mut App) {
+    let _ = app;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,53 +224,44 @@ mod tests {
         let mut app = App::new(config, pipeline);
         app.focused_block = FocusedBlock::Pipeline;
 
-        // Initial state
         assert_eq!(app.eq.column_selected, 1);
 
-        // Move right with 'l'
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE),
             &mut app,
         );
         assert_eq!(app.eq.column_selected, 2);
 
-        // Move right with Right arrow
         handle_pipeline(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), &mut app);
         assert_eq!(app.eq.column_selected, 3);
 
-        // Move right to boundary
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE),
             &mut app,
         );
         assert_eq!(app.eq.column_selected, 4);
 
-        // Move right again (should clamp)
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE),
             &mut app,
         );
         assert_eq!(app.eq.column_selected, 4);
 
-        // Move left with 'h'
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
             &mut app,
         );
         assert_eq!(app.eq.column_selected, 3);
 
-        // Move left with Left arrow
         handle_pipeline(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE), &mut app);
         assert_eq!(app.eq.column_selected, 2);
 
-        // Move left to boundary
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
             &mut app,
         );
         assert_eq!(app.eq.column_selected, 1);
 
-        // Move left again (should clamp)
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
             &mut app,
@@ -281,7 +276,6 @@ mod tests {
         let mut app = App::new(config, pipeline);
         app.focused_block = FocusedBlock::Pipeline;
 
-        // Add a band to test with
         app.eq.bands.push(EqBand {
             frequency: 1000.0,
             gain: 0.0,
@@ -291,21 +285,18 @@ mod tests {
         app.eq.band_selected = 0;
         app.eq.column_selected = 1; // Frequency
 
-        // Bump frequency up
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('+'), KeyModifiers::NONE),
             &mut app,
         );
         assert_eq!(app.eq.bands[0].frequency, 1050.0);
 
-        // Bump frequency down
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('-'), KeyModifiers::NONE),
             &mut app,
         );
         assert_eq!(app.eq.bands[0].frequency, 1000.0);
 
-        // Switch to gain
         app.eq.column_selected = 2;
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('='), KeyModifiers::NONE),
@@ -319,7 +310,6 @@ mod tests {
         );
         assert_eq!(app.eq.bands[0].gain, 0.0);
 
-        // Switch to Q
         app.eq.column_selected = 3;
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('+'), KeyModifiers::NONE),
@@ -333,7 +323,6 @@ mod tests {
         );
         assert_eq!(app.eq.bands[0].q, 1.0);
 
-        // Switch to filter type
         app.eq.column_selected = 4;
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('+'), KeyModifiers::NONE),
@@ -355,7 +344,6 @@ mod tests {
         let mut app = App::new(config, pipeline);
         app.focused_block = FocusedBlock::Pipeline;
 
-        // Add a band
         app.eq.bands.push(EqBand {
             frequency: 1000.0,
             gain: 5.5,
@@ -364,7 +352,6 @@ mod tests {
         });
         app.eq.band_selected = 0;
 
-        // Test frequency column (1)
         app.eq.column_selected = 1;
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
@@ -373,7 +360,6 @@ mod tests {
         assert_eq!(app.mode, Mode::Insert);
         assert_eq!(app.eq.cell_input.value(), "1000.0");
 
-        // Test gain column (2)
         app.mode = Mode::Normal;
         app.eq.column_selected = 2;
         handle_pipeline(
@@ -382,7 +368,6 @@ mod tests {
         );
         assert_eq!(app.eq.cell_input.value(), "5.5");
 
-        // Test Q column (3)
         app.mode = Mode::Normal;
         app.eq.column_selected = 3;
         handle_pipeline(
@@ -391,7 +376,6 @@ mod tests {
         );
         assert_eq!(app.eq.cell_input.value(), "1.00");
 
-        // Test filter type column (4)
         app.mode = Mode::Normal;
         app.eq.column_selected = 4;
         handle_pipeline(
@@ -416,7 +400,6 @@ mod tests {
         });
         app.nodes_selected = 0;
 
-        // Connect device
         let result = handle_devices(
             KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
             &mut app,
@@ -425,7 +408,6 @@ mod tests {
         assert!(app.is_device_connected(123));
         assert_eq!(app.connected_devices, vec![123]);
 
-        // Disconnect device
         let result = handle_devices(
             KeyEvent::new(KeyCode::Char('C'), KeyModifiers::NONE),
             &mut app,
@@ -480,8 +462,4 @@ mod tests {
         // Should return None because filter isn't ready
         assert!(result.is_none());
     }
-}
-
-fn handle_command_bar(_key: KeyEvent, app: &mut App) {
-    let _ = app;
 }

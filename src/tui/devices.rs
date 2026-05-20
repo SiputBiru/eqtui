@@ -25,7 +25,7 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
 
             let mut name = node.to_string();
             if is_eqtui {
-                name.push_str(" \u{2190}this app");
+                name.push_str(" [this app]");
             }
 
             let name_cell = if is_eqtui {
@@ -35,19 +35,19 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
                         .fg(Color::Cyan),
                 )
             } else if app.is_device_connected(node.id) {
-                Cell::new(format!("\u{2192} {name}")).style(Style::default().fg(Color::Green))
+                Cell::new(format!(" {name}")).style(Style::default().fg(Color::Green))
             } else {
                 Cell::new(name)
             };
 
             Row::new(vec![
-                Cell::new(icon),
+                Cell::new(format!("  {} ", icon)),
                 name_cell,
                 Cell::new(node.id.to_string()),
                 if app.is_device_connected(node.id) {
-                    Cell::new("✓").style(Style::default().fg(Color::Green))
+                    Cell::new("C").style(Style::default().fg(Color::Green))
                 } else {
-                    Cell::new("✗").dark_gray()
+                    Cell::new("-").dark_gray()
                 },
             ])
         })

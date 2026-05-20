@@ -686,18 +686,29 @@ fn remove_device_output_links(filter_id: u32, device_id: u32) {
 
         tracing::info!(%out_spec, %in_spec, "Calling pw-link -d to remove output link");
 
-        let status = std::process::Command::new("pw-link")
+        let output = std::process::Command::new("pw-link")
             .arg("-d")
             .arg(&out_spec)
             .arg(&in_spec)
-            .status();
+            .output();
 
-        match status {
-            Ok(s) if s.success() => {
+        match output {
+            Ok(o) if o.status.success() => {
                 tracing::info!(%out_spec, %in_spec, "pw-link -d success");
             }
-            Ok(s) => {
-                tracing::error!(%out_spec, %in_spec, "pw-link -d failed with status: {s}");
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                // "No such file or directory" (ENOENT) means the link was
+                // already removed (or never existed) — harmless.
+                if stderr.contains("No such file") {
+                    tracing::debug!(%out_spec, %in_spec, "Output link not found (already removed)");
+                } else {
+                    tracing::error!(
+                        %out_spec, %in_spec,
+                        "pw-link -d failed: {}",
+                        stderr.trim()
+                    );
+                }
             }
             Err(e) => {
                 tracing::error!(%out_spec, %in_spec, "failed to execute pw-link -d: {e}");
@@ -956,7 +967,6 @@ mod tests {
     #[test]
     fn test_process_buffers_null_checks() {
         let pipeline = Pipeline::new(48000.0);
-        // Should return early and not panic
         process_buffers(
             &pipeline,
             ptr::null_mut(),
@@ -970,12 +980,10 @@ mod tests {
     #[test]
     fn test_process_buffers_alignment_checks() {
         let pipeline = Pipeline::new(48000.0);
-        // Create misaligned pointer by using an odd address.
-        // Use without_provenance_mut (Strict Provenance) — these are
-        // synthetic pointers only used for alignment checking, so they
-        // don't need real provenance.
+        // These are synthetic pointers only used for alignment checking, so they
+        // don't need real provenance (using Strict Provenance API).
         let misaligned = ptr::without_provenance_mut::<f32>(0x0123_4567);
-        let valid = ptr::without_provenance_mut::<f32>(0x0123_4568); // assuming 4-byte align is met by 8
+        let valid = ptr::without_provenance_mut::<f32>(0x0123_4568);
         process_buffers(&pipeline, misaligned, valid, valid, valid, 1024);
     }
 }

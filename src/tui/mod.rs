@@ -83,12 +83,10 @@ pub fn render(app: &App, frame: &mut ratatui::Frame) {
     ])
     .areas(sidebar_area);
 
-    // Render components
     devices::render(app, frame, devices_area);
     eq_table::render(app, frame, bands_area);
     status::render_monitoring(app, frame, monitoring_area);
     status::render_hints(app, frame, hint_area);
 
-    // Right Pane (Detail)
     graph::render(app, frame, main_view_area);
 }

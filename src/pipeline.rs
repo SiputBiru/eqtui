@@ -39,7 +39,6 @@ impl Pipeline {
             self.eq.process(left_in, right_in, left_out, right_out);
         }
 
-        // Calculate and store peaks
         let mut max_l = 0.0_f32;
         for &sample in left_out.iter() {
             let abs = sample.abs();
