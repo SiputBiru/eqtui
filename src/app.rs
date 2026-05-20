@@ -5,7 +5,7 @@ use tui_input::Input;
 use crate::AppResult;
 use crate::config::Config;
 use crate::pipeline::Pipeline;
-use crate::state::{EqBand, NodeInfo, PwCommand, PwEvent};
+use crate::state::{EqBand, FilterState, NodeInfo, NullSinkState, PwCommand, PwEvent};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FocusedBlock {
@@ -22,6 +22,27 @@ pub enum Mode {
     Command,
 }
 
+#[derive(Debug, Clone)]
+pub struct EqState {
+    pub bypass: bool,
+    pub bands: Vec<EqBand>,
+    pub band_selected: usize,
+    pub column_selected: usize,
+    pub cell_input: Input,
+}
+
+impl Default for EqState {
+    fn default() -> Self {
+        Self {
+            bypass: false,
+            bands: Vec::new(),
+            band_selected: 0,
+            column_selected: 1,
+            cell_input: Input::default(),
+        }
+    }
+}
+
 pub struct App {
     pub running: bool,
     pub config: Arc<Config>,
@@ -31,21 +52,15 @@ pub struct App {
     pub nodes_selected: usize,
     pub pw_connected: bool,
     pub command_input: String,
-    pub eq_bands: Vec<EqBand>,
-    pub eq_band_selected: usize,
-    pub eq_column_selected: usize,
-    pub cell_input: Input,
-    pub eq_bypass: bool,
+    pub eq: EqState,
     pub last_key: Option<char>,
     pub pipeline: Arc<Pipeline>,
     pub peak_l: f32,
     pub peak_r: f32,
-    pub null_sink_loaded: bool,
-    pub null_sink_module_id: Option<u32>,
+    pub null_sink: NullSinkState,
     pub connected_devices: Vec<u32>,
     pub filter_node_id: Option<u32>,
-    pub null_sink_has_source: bool,
-    pub filter_state: String,
+    pub filter_state: FilterState,
 }
 
 impl App {
@@ -59,21 +74,15 @@ impl App {
             nodes_selected: 0,
             pw_connected: false,
             command_input: String::new(),
-            eq_bands: Vec::new(),
-            eq_band_selected: 0,
-            eq_column_selected: 1,
-            cell_input: Input::default(),
-            eq_bypass: false,
+            eq: EqState::default(),
             last_key: None,
             pipeline,
             peak_l: -60.0,
             peak_r: -60.0,
-            null_sink_loaded: false,
-            null_sink_module_id: None,
+            null_sink: NullSinkState::NotLoaded,
             connected_devices: Vec::new(),
             filter_node_id: None,
-            null_sink_has_source: false,
-            filter_state: "UNCONNECTED".to_string(),
+            filter_state: FilterState::Unconnected,
         }
     }
 
@@ -138,11 +147,13 @@ impl App {
                 self.filter_node_id = Some(node_id);
             }
             PwEvent::NullSinkCreated { module_id } => {
-                self.null_sink_loaded = true;
-                self.null_sink_module_id = Some(module_id);
+                self.null_sink = NullSinkState::Loaded {
+                    module_id,
+                    has_source: false,
+                };
             }
             PwEvent::NullSinkInputState { has_source } => {
-                self.null_sink_has_source = has_source;
+                self.null_sink.set_has_source(has_source);
             }
             PwEvent::NullSinkError(e) => {
                 tracing::error!(%e, "Null sink error");
@@ -158,7 +169,7 @@ impl App {
     }
 
     pub fn sync_bands(&self) -> AppResult<()> {
-        self.pipeline.set_bands(self.eq_bands.clone(), 48000.0)
+        self.pipeline.set_bands(self.eq.bands.clone(), 48000.0)
     }
 
     pub fn is_device_connected(&self, id: u32) -> bool {
@@ -197,19 +208,19 @@ mod tests {
         let app = App::new(config, pipeline);
 
         assert!(app.running);
-        assert_eq!(app.eq_band_selected, 0);
-        assert_eq!(app.eq_column_selected, 1);
-        assert_eq!(app.cell_input.value(), "");
-        assert!(!app.eq_bypass);
+        assert_eq!(app.eq.band_selected, 0);
+        assert_eq!(app.eq.column_selected, 1);
+        assert_eq!(app.eq.cell_input.value(), "");
+        assert!(!app.eq.bypass);
 
         let margin = f32::EPSILON;
         assert!((app.peak_l - (-60.0_f32)).abs() < margin);
         assert!((app.peak_r - (-60.0_f32)).abs() < margin);
-        assert!(!app.null_sink_loaded);
-        assert_eq!(app.null_sink_module_id, None);
+        assert!(!app.null_sink.is_loaded());
+        assert_eq!(app.null_sink.module_id(), None);
         assert!(app.connected_devices.is_empty());
         assert_eq!(app.filter_node_id, None);
-        assert!(!app.null_sink_has_source);
-        assert_eq!(app.filter_state, "UNCONNECTED");
+        assert!(!app.null_sink.has_source());
+        assert_eq!(app.filter_state.to_string(), "UNCONNECTED");
     }
 }

@@ -37,7 +37,7 @@ fn exec(cmd: &str, app: &mut App) {
             // Save preset (placeholder)
         }
         Some("flat") => {
-            for b in &mut app.eq_bands {
+            for b in &mut app.eq.bands {
                 b.gain = 0.0;
             }
             if let Err(e) = app.sync_bands() {
@@ -45,11 +45,11 @@ fn exec(cmd: &str, app: &mut App) {
             }
         }
         Some("bypass") => {
-            app.eq_bypass = !app.eq_bypass;
+            app.eq.bypass = !app.eq.bypass;
         }
         Some("add") => {
             let freq = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(1000.0);
-            app.eq_bands.push(EqBand {
+            app.eq.bands.push(EqBand {
                 frequency: freq,
                 gain: 0.0,
                 q: 1.0,

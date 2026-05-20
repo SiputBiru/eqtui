@@ -7,8 +7,8 @@ use crate::app::{App, FocusedBlock, Mode};
 use crate::state::FilterType;
 
 pub fn render(app: &App, frame: &mut Frame, area: Rect) {
-    let bands = &app.eq_bands;
-    let selected = app.eq_band_selected;
+    let bands = &app.eq.bands;
+    let selected = app.eq.band_selected;
 
     let is_focused = matches!(app.focused_block, FocusedBlock::Pipeline);
 
@@ -41,30 +41,30 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
 
             let mut cells = vec![
                 Cell::new(format!("{}", i + 1)),
-                Cell::new(if is_editing && app.eq_column_selected == 1 {
-                    format!("{}█", app.cell_input.value())
+                Cell::new(if is_editing && app.eq.column_selected == 1 {
+                    format!("{}█", app.eq.cell_input.value())
                 } else {
                     freq
                 }),
-                Cell::new(if is_editing && app.eq_column_selected == 2 {
-                    format!("{}█", app.cell_input.value())
+                Cell::new(if is_editing && app.eq.column_selected == 2 {
+                    format!("{}█", app.eq.cell_input.value())
                 } else {
                     gain
                 }),
-                Cell::new(if is_editing && app.eq_column_selected == 3 {
-                    format!("{}█", app.cell_input.value())
+                Cell::new(if is_editing && app.eq.column_selected == 3 {
+                    format!("{}█", app.eq.cell_input.value())
                 } else {
                     q
                 }),
-                Cell::new(if is_editing && app.eq_column_selected == 4 {
-                    format!("{}█", app.cell_input.value())
+                Cell::new(if is_editing && app.eq.column_selected == 4 {
+                    format!("{}█", app.eq.cell_input.value())
                 } else {
                     ftype.to_string()
                 }),
             ];
 
             if i == selected && is_focused {
-                let col = app.eq_column_selected;
+                let col = app.eq.column_selected;
                 if col < cells.len() {
                     let style = if app.mode == Mode::Insert {
                         Style::default().fg(Color::White).bg(Color::Cyan)

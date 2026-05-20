@@ -51,29 +51,30 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
         KeyCode::Tab => {
             app.focused_block = FocusedBlock::Devices;
         }
-        KeyCode::Left | KeyCode::Char('h') if app.eq_column_selected > 1 => {
-            app.eq_column_selected -= 1;
+        KeyCode::Left | KeyCode::Char('h') if app.eq.column_selected > 1 => {
+            app.eq.column_selected -= 1;
         }
-        KeyCode::Right | KeyCode::Char('l') if app.eq_column_selected < 4 => {
+        KeyCode::Right | KeyCode::Char('l') if app.eq.column_selected < 4 => {
             // Freq(1), Gain(2), Q(3), Type(4)
-            app.eq_column_selected += 1;
+            app.eq.column_selected += 1;
         }
-        KeyCode::Down | KeyCode::Char('j') if !app.eq_bands.is_empty() => {
-            app.eq_band_selected = (app.eq_band_selected + 1) % app.eq_bands.len();
+        KeyCode::Down | KeyCode::Char('j') if !app.eq.bands.is_empty() => {
+            app.eq.band_selected = (app.eq.band_selected + 1) % app.eq.bands.len();
         }
-        KeyCode::Up | KeyCode::Char('k') if !app.eq_bands.is_empty() => {
-            app.eq_band_selected = app
-                .eq_band_selected
+        KeyCode::Up | KeyCode::Char('k') if !app.eq.bands.is_empty() => {
+            app.eq.band_selected = app
+                .eq
+                .band_selected
                 .checked_sub(1)
-                .unwrap_or(app.eq_bands.len() - 1);
+                .unwrap_or(app.eq.bands.len() - 1);
         }
         KeyCode::Char('a') => {
             let freq = 1000.0;
             let gain = 0.0;
             let q = 1.0;
             let ftype = FilterType::Peak;
-            let insert_at = (app.eq_band_selected + 1).min(app.eq_bands.len());
-            app.eq_bands.insert(
+            let insert_at = (app.eq.band_selected + 1).min(app.eq.bands.len());
+            app.eq.bands.insert(
                 insert_at,
                 EqBand {
                     frequency: freq,
@@ -82,15 +83,15 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
                     filter_type: ftype,
                 },
             );
-            app.eq_band_selected = insert_at;
+            app.eq.band_selected = insert_at;
             if let Err(e) = app.sync_bands() {
                 tracing::error!(%e, "Failed to sync EQ bands");
             }
         }
-        KeyCode::Char('d') if app.last_key == Some('d') && !app.eq_bands.is_empty() => {
-            app.eq_bands.remove(app.eq_band_selected);
-            if app.eq_band_selected >= app.eq_bands.len() {
-                app.eq_band_selected = app.eq_bands.len().saturating_sub(1);
+        KeyCode::Char('d') if app.last_key == Some('d') && !app.eq.bands.is_empty() => {
+            app.eq.bands.remove(app.eq.band_selected);
+            if app.eq.band_selected >= app.eq.bands.len() {
+                app.eq.band_selected = app.eq.bands.len().saturating_sub(1);
             }
             app.last_key = None;
             if let Err(e) = app.sync_bands() {
@@ -100,9 +101,9 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
         }
         KeyCode::Char('i') => {
             app.mode = Mode::Insert;
-            if !app.eq_bands.is_empty() {
-                let b = &app.eq_bands[app.eq_band_selected];
-                let val_str = match app.eq_column_selected {
+            if !app.eq.bands.is_empty() {
+                let b = &app.eq.bands[app.eq.band_selected];
+                let val_str = match app.eq.column_selected {
                     1 => format!("{:.1}", b.frequency),
                     2 => format!("{:.1}", b.gain),
                     3 => format!("{:.2}", b.q),
@@ -113,7 +114,7 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
                     },
                     _ => String::new(),
                 };
-                app.cell_input = tui_input::Input::new(val_str);
+                app.eq.cell_input = tui_input::Input::new(val_str);
             }
         }
         KeyCode::Char('v') => app.mode = Mode::Visual,
@@ -122,20 +123,20 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
             app.command_input.clear();
         }
         KeyCode::Char('b') => {
-            app.eq_bypass = !app.eq_bypass;
-            if app.eq_bypass {
+            app.eq.bypass = !app.eq.bypass;
+            if app.eq.bypass {
                 app.pipeline.set_bypass(true);
             } else {
                 app.pipeline.set_bypass(false);
             }
         }
-        KeyCode::Char('g') if app.last_key == Some('g') && !app.eq_bands.is_empty() => {
-            app.eq_band_selected = 0;
+        KeyCode::Char('g') if app.last_key == Some('g') && !app.eq.bands.is_empty() => {
+            app.eq.band_selected = 0;
             app.last_key = None;
             return;
         }
-        KeyCode::Char('r') if !app.eq_bands.is_empty() => {
-            let b = &mut app.eq_bands[app.eq_band_selected];
+        KeyCode::Char('r') if !app.eq.bands.is_empty() => {
+            let b = &mut app.eq.bands[app.eq.band_selected];
             b.gain = 0.0;
             b.q = 1.0;
             if let Err(e) = app.sync_bands() {
@@ -143,7 +144,7 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
             }
         }
         KeyCode::Char('R') => {
-            for b in &mut app.eq_bands {
+            for b in &mut app.eq.bands {
                 b.gain = 0.0;
                 b.q = 1.0;
             }
@@ -152,11 +153,11 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
             }
         }
         KeyCode::Char('+' | '=') => {
-            if app.eq_bands.is_empty() {
+            if app.eq.bands.is_empty() {
                 return;
             }
-            let b = &mut app.eq_bands[app.eq_band_selected];
-            match app.eq_column_selected {
+            let b = &mut app.eq.bands[app.eq.band_selected];
+            match app.eq.column_selected {
                 1 => b.frequency = (b.frequency + 50.0).min(20000.0),
                 2 => b.gain += 0.5,
                 3 => b.q = (b.q + 0.1).min(10.0),
@@ -174,11 +175,11 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
             }
         }
         KeyCode::Char('-') => {
-            if app.eq_bands.is_empty() {
+            if app.eq.bands.is_empty() {
                 return;
             }
-            let b = &mut app.eq_bands[app.eq_band_selected];
-            match app.eq_column_selected {
+            let b = &mut app.eq.bands[app.eq.band_selected];
+            match app.eq.column_selected {
                 1 => b.frequency = (b.frequency - 50.0).max(20.0),
                 2 => b.gain -= 0.5,
                 3 => b.q = (b.q - 0.1).max(0.1),
@@ -220,57 +221,57 @@ mod tests {
         app.focused_block = FocusedBlock::Pipeline;
 
         // Initial state
-        assert_eq!(app.eq_column_selected, 1);
+        assert_eq!(app.eq.column_selected, 1);
 
         // Move right with 'l'
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE),
             &mut app,
         );
-        assert_eq!(app.eq_column_selected, 2);
+        assert_eq!(app.eq.column_selected, 2);
 
         // Move right with Right arrow
         handle_pipeline(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), &mut app);
-        assert_eq!(app.eq_column_selected, 3);
+        assert_eq!(app.eq.column_selected, 3);
 
         // Move right to boundary
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE),
             &mut app,
         );
-        assert_eq!(app.eq_column_selected, 4);
+        assert_eq!(app.eq.column_selected, 4);
 
         // Move right again (should clamp)
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE),
             &mut app,
         );
-        assert_eq!(app.eq_column_selected, 4);
+        assert_eq!(app.eq.column_selected, 4);
 
         // Move left with 'h'
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
             &mut app,
         );
-        assert_eq!(app.eq_column_selected, 3);
+        assert_eq!(app.eq.column_selected, 3);
 
         // Move left with Left arrow
         handle_pipeline(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE), &mut app);
-        assert_eq!(app.eq_column_selected, 2);
+        assert_eq!(app.eq.column_selected, 2);
 
         // Move left to boundary
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
             &mut app,
         );
-        assert_eq!(app.eq_column_selected, 1);
+        assert_eq!(app.eq.column_selected, 1);
 
         // Move left again (should clamp)
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
             &mut app,
         );
-        assert_eq!(app.eq_column_selected, 1);
+        assert_eq!(app.eq.column_selected, 1);
     }
 
     #[test]
@@ -281,70 +282,70 @@ mod tests {
         app.focused_block = FocusedBlock::Pipeline;
 
         // Add a band to test with
-        app.eq_bands.push(EqBand {
+        app.eq.bands.push(EqBand {
             frequency: 1000.0,
             gain: 0.0,
             q: 1.0,
             filter_type: FilterType::Peak,
         });
-        app.eq_band_selected = 0;
-        app.eq_column_selected = 1; // Frequency
+        app.eq.band_selected = 0;
+        app.eq.column_selected = 1; // Frequency
 
         // Bump frequency up
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('+'), KeyModifiers::NONE),
             &mut app,
         );
-        assert_eq!(app.eq_bands[0].frequency, 1050.0);
+        assert_eq!(app.eq.bands[0].frequency, 1050.0);
 
         // Bump frequency down
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('-'), KeyModifiers::NONE),
             &mut app,
         );
-        assert_eq!(app.eq_bands[0].frequency, 1000.0);
+        assert_eq!(app.eq.bands[0].frequency, 1000.0);
 
         // Switch to gain
-        app.eq_column_selected = 2;
+        app.eq.column_selected = 2;
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('='), KeyModifiers::NONE),
             &mut app,
         );
-        assert_eq!(app.eq_bands[0].gain, 0.5);
+        assert_eq!(app.eq.bands[0].gain, 0.5);
 
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('-'), KeyModifiers::NONE),
             &mut app,
         );
-        assert_eq!(app.eq_bands[0].gain, 0.0);
+        assert_eq!(app.eq.bands[0].gain, 0.0);
 
         // Switch to Q
-        app.eq_column_selected = 3;
+        app.eq.column_selected = 3;
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('+'), KeyModifiers::NONE),
             &mut app,
         );
-        assert_eq!(app.eq_bands[0].q, 1.1);
+        assert_eq!(app.eq.bands[0].q, 1.1);
 
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('-'), KeyModifiers::NONE),
             &mut app,
         );
-        assert_eq!(app.eq_bands[0].q, 1.0);
+        assert_eq!(app.eq.bands[0].q, 1.0);
 
         // Switch to filter type
-        app.eq_column_selected = 4;
+        app.eq.column_selected = 4;
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('+'), KeyModifiers::NONE),
             &mut app,
         );
-        assert_eq!(app.eq_bands[0].filter_type, FilterType::LowShelf);
+        assert_eq!(app.eq.bands[0].filter_type, FilterType::LowShelf);
 
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('-'), KeyModifiers::NONE),
             &mut app,
         );
-        assert_eq!(app.eq_bands[0].filter_type, FilterType::Peak);
+        assert_eq!(app.eq.bands[0].filter_type, FilterType::Peak);
     }
 
     #[test]
@@ -355,49 +356,49 @@ mod tests {
         app.focused_block = FocusedBlock::Pipeline;
 
         // Add a band
-        app.eq_bands.push(EqBand {
+        app.eq.bands.push(EqBand {
             frequency: 1000.0,
             gain: 5.5,
             q: 1.0,
             filter_type: FilterType::Peak,
         });
-        app.eq_band_selected = 0;
+        app.eq.band_selected = 0;
 
         // Test frequency column (1)
-        app.eq_column_selected = 1;
+        app.eq.column_selected = 1;
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
             &mut app,
         );
         assert_eq!(app.mode, Mode::Insert);
-        assert_eq!(app.cell_input.value(), "1000.0");
+        assert_eq!(app.eq.cell_input.value(), "1000.0");
 
         // Test gain column (2)
         app.mode = Mode::Normal;
-        app.eq_column_selected = 2;
+        app.eq.column_selected = 2;
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
             &mut app,
         );
-        assert_eq!(app.cell_input.value(), "5.5");
+        assert_eq!(app.eq.cell_input.value(), "5.5");
 
         // Test Q column (3)
         app.mode = Mode::Normal;
-        app.eq_column_selected = 3;
+        app.eq.column_selected = 3;
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
             &mut app,
         );
-        assert_eq!(app.cell_input.value(), "1.00");
+        assert_eq!(app.eq.cell_input.value(), "1.00");
 
         // Test filter type column (4)
         app.mode = Mode::Normal;
-        app.eq_column_selected = 4;
+        app.eq.column_selected = 4;
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
             &mut app,
         );
-        assert_eq!(app.cell_input.value(), "PK");
+        assert_eq!(app.eq.cell_input.value(), "PK");
     }
 
     #[test]

@@ -25,10 +25,10 @@ pub fn render_monitoring(app: &App, frame: &mut Frame, area: Rect) {
     } else {
         "Disconnected".red()
     };
-    let state_color = match app.filter_state.as_str() {
-        "STREAMING" => Color::Green,
-        "CONNECTING" => Color::Yellow,
-        "ERROR" => Color::Red,
+    let state_color = match app.filter_state {
+        crate::state::FilterState::Streaming => Color::Green,
+        crate::state::FilterState::Connecting => Color::Yellow,
+        crate::state::FilterState::Error(_) => Color::Red,
         _ => Color::DarkGray,
     };
 
@@ -36,7 +36,7 @@ pub fn render_monitoring(app: &App, frame: &mut Frame, area: Rect) {
         Line::from(vec![Span::raw("Core: "), pw_status]),
         Line::from(vec![
             Span::raw("Source: "),
-            if app.null_sink_has_source {
+            if app.null_sink.has_source() {
                 Span::styled("active", Style::default().fg(Color::Green))
             } else {
                 Span::raw("---").dark_gray()
@@ -44,7 +44,10 @@ pub fn render_monitoring(app: &App, frame: &mut Frame, area: Rect) {
         ]),
         Line::from(vec![
             Span::raw("State: "),
-            Span::styled(&app.filter_state, Style::default().fg(state_color).bold()),
+            Span::styled(
+                app.filter_state.to_string(),
+                Style::default().fg(state_color).bold(),
+            ),
         ]),
         Line::from(vec![
             Span::raw("Outputs: "),
@@ -59,9 +62,9 @@ pub fn render_monitoring(app: &App, frame: &mut Frame, area: Rect) {
         ]),
         Line::from(vec![
             Span::raw("Null Sink: "),
-            if app.null_sink_loaded {
+            if app.null_sink.is_loaded() {
                 Span::styled(
-                    format!("Loaded (ID {})", app.null_sink_module_id.unwrap_or(0)),
+                    format!("Loaded (ID {})", app.null_sink.module_id().unwrap_or(0)),
                     Style::default().fg(Color::Cyan),
                 )
             } else {

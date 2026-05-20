@@ -136,8 +136,16 @@ unsafe extern "C" fn state_changed_cb(
 ) {
     unsafe {
         let fd = &*(data as *const FilterData);
-        let state_str = state_name_for(new).to_string();
-        let _ = fd.tx.send(PwEvent::FilterStateChanged(state_str.clone()));
+        let state_str = state_name_for(new);
+        let filter_state = match state_str {
+            "UNCONNECTED" => crate::state::FilterState::Unconnected,
+            "CONNECTING" => crate::state::FilterState::Connecting,
+            "PAUSED" => crate::state::FilterState::Paused,
+            "STREAMING" => crate::state::FilterState::Streaming,
+            "ERROR" => crate::state::FilterState::Error(String::new()),
+            _ => crate::state::FilterState::Unconnected,
+        };
+        let _ = fd.tx.send(PwEvent::FilterStateChanged(filter_state));
 
         // When the filter reaches PAUSED state, its ports are registered.
         // We link here because STREAMING may never be reached if there
@@ -339,6 +347,10 @@ fn create_null_sink(
     // Mark as passive so WirePlumber doesn't auto-connect new streams to
     // it unless explicitly requested by the user.
     props.set("node.passive", "true");
+    // Mark as virtual so WirePlumber excludes this node from default-sink
+    // selection. Without this, WirePlumber may promote the null sink to
+    // the system default despite priority.session=0.
+    props.set("node.virtual", "true");
 
     let factory_cstr = CString::new("adapter").expect("factory name should not contain null bytes");
     let type_cstr =
@@ -592,6 +604,14 @@ fn create_monitor_links(out_node_id: u32, in_node_id: u32) {
         let out_spec = format!("{out_node_id}:{out_port}");
         let in_spec = format!("{in_node_id}:{in_port}");
 
+        // Skip if the link already exists (e.g. left over from a previous
+        // run that didn't tear down cleanly).  This avoids the noisy
+        // "failed to link ports: File exists" error from pw-link.
+        if link_exists(&out_spec, &in_spec) {
+            tracing::debug!(%out_spec, %in_spec, "Monitor link already exists, skipping");
+            continue;
+        }
+
         tracing::info!(%out_spec, %in_spec, "Calling pw-link for monitor link");
 
         let status = std::process::Command::new("pw-link")
@@ -621,6 +641,12 @@ fn create_device_output_links(filter_id: u32, device_id: u32) {
     for (out_port, in_port) in &links {
         let out_spec = format!("{filter_id}:{out_port}");
         let in_spec = format!("{device_id}:{in_port}");
+
+        // Skip if the link already exists to avoid the "File exists" error.
+        if link_exists(&out_spec, &in_spec) {
+            tracing::debug!(%out_spec, %in_spec, "Output link already exists, skipping");
+            continue;
+        }
 
         tracing::info!(%out_spec, %in_spec, "Calling pw-link for output link");
 
@@ -672,6 +698,38 @@ fn remove_device_output_links(filter_id: u32, device_id: u32) {
             }
         }
     }
+}
+
+/// Check whether a `PipeWire` link already exists between two ports by
+/// parsing `pw-link -l` output.  Returns `true` if a link from `out_spec`
+/// to `in_spec` is already present in the graph.
+fn link_exists(out_spec: &str, in_spec: &str) -> bool {
+    let Ok(output) = std::process::Command::new("pw-link")
+        .arg("-l")
+        .output()
+    else {
+        return false;
+    };
+
+    let text = String::from_utf8_lossy(&output.stdout);
+
+    // pw-link -l output lists each link in both directions:
+    //   port_A
+    //     |-> port_B          (A is the output)
+    //     |<- port_B          (B is the output)
+    // We scan for a line matching out_spec followed by a line
+    // containing "|->" and in_spec.
+    let mut lines = text.lines();
+    while let Some(line) = lines.next() {
+        if line.trim() == out_spec {
+            if let Some(next_line) = lines.next() {
+                if next_line.trim().starts_with("|->") && next_line.contains(in_spec) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Check whether any `PipeWire` link routes audio INTO the null sink's
