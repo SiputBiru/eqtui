@@ -1,6 +1,6 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::widgets::{Block, BorderType, Borders, Cell, Row, Table, TableState};
 
 use crate::app::{App, FocusedBlock};
@@ -8,7 +8,7 @@ use crate::app::{App, FocusedBlock};
 pub fn render(app: &App, frame: &mut Frame, area: Rect) {
     let is_focused = app.focused_block == FocusedBlock::Devices;
 
-    let header = Row::new(["Class", "Name", "ID"])
+    let header = Row::new(["Class", "Name", "ID", "Conn"])
         .style(if is_focused {
             Style::default().fg(Color::Yellow).bold()
         } else {
@@ -34,10 +34,8 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
                         .add_modifier(Modifier::BOLD)
                         .fg(Color::Cyan),
                 )
-            } else if app.bound_output_id == Some(node.id) {
-                Cell::new(format!("\u{2192} {name}")).style(
-                    Style::default().fg(Color::Green),
-                )
+            } else if app.is_device_connected(node.id) {
+                Cell::new(format!("\u{2192} {name}")).style(Style::default().fg(Color::Green))
             } else {
                 Cell::new(name)
             };
@@ -46,6 +44,11 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
                 Cell::new(icon),
                 name_cell,
                 Cell::new(node.id.to_string()),
+                if app.is_device_connected(node.id) {
+                    Cell::new("✓").style(Style::default().fg(Color::Green))
+                } else {
+                    Cell::new("✗").dark_gray()
+                },
             ])
         })
         .collect();
@@ -54,6 +57,7 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
         Constraint::Length(5),
         Constraint::Fill(1),
         Constraint::Length(8),
+        Constraint::Length(5),
     ];
 
     let table = Table::new(rows, widths)

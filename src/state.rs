@@ -57,14 +57,27 @@ pub enum PwEvent {
     NodeRemoved(u32),
     Connected,
     FilterStateChanged(String),
-    NullSinkCreated { module_id: u32 },
+    /// Sent once when the DSP filter node ID is known. The TUI needs this
+    /// to construct `ConnectDevice` / `DisconnectDevice` commands.
+    FilterReady {
+        node_id: u32,
+    },
+    NullSinkCreated {
+        module_id: u32,
+    },
+    /// Whether an audio source is currently linked to the null-sink's
+    /// `playback_FL` / `playback_FR` input ports.
+    NullSinkInputState {
+        has_source: bool,
+    },
     NullSinkError(String),
     Error(String),
 }
 
 pub enum PwCommand {
     Terminate,
-    SetTarget { node_id: u32 },
+    ConnectDevice { filter_id: u32, node_id: u32 },
+    DisconnectDevice { filter_id: u32, node_id: u32 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

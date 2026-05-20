@@ -23,30 +23,22 @@ fn handle_devices(key: KeyEvent, app: &mut App) -> Option<PwCommand> {
         KeyCode::Tab | KeyCode::Char('l') => {
             app.focused_block = FocusedBlock::Pipeline;
         }
-        KeyCode::Down | KeyCode::Char('j') => {
-            if !app.nodes.is_empty() {
-                app.nodes_selected = (app.nodes_selected + 1) % app.nodes.len();
-            }
+        KeyCode::Down | KeyCode::Char('j') if !app.nodes.is_empty() => {
+            app.nodes_selected = (app.nodes_selected + 1) % app.nodes.len();
         }
-        KeyCode::Up | KeyCode::Char('k') => {
-            if !app.nodes.is_empty() {
-                app.nodes_selected = app
-                    .nodes_selected
-                    .checked_sub(1)
-                    .unwrap_or(app.nodes.len() - 1);
-            }
+        KeyCode::Up | KeyCode::Char('k') if !app.nodes.is_empty() => {
+            app.nodes_selected = app
+                .nodes_selected
+                .checked_sub(1)
+                .unwrap_or(app.nodes.len() - 1);
         }
-        KeyCode::Enter => {
-            if !app.nodes.is_empty() {
-                let target_node = &app.nodes[app.nodes_selected];
-                // Skip if it's the eqtui null sink itself (can't route eqtui → eqtui)
-                if target_node.description.contains("eqtui") {
-                    return None;
-                }
-                let target_id = target_node.id;
-                app.bound_output_id = Some(target_id);
-                return Some(PwCommand::SetTarget { node_id: target_id });
+        KeyCode::Char('c' | 'C') if !app.nodes.is_empty() => {
+            let target_node = &app.nodes[app.nodes_selected];
+            // Skip if it's the eqtui null sink itself (can't route eqtui → eqtui)
+            if target_node.description.contains("eqtui") {
+                return None;
             }
+            return app.toggle_device_connection(target_node.id);
         }
         _ => {}
     }
@@ -59,28 +51,21 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
         KeyCode::Tab => {
             app.focused_block = FocusedBlock::Devices;
         }
-        KeyCode::Left | KeyCode::Char('h') => {
-            if app.eq_column_selected > 1 {
-                app.eq_column_selected -= 1;
-            }
+        KeyCode::Left | KeyCode::Char('h') if app.eq_column_selected > 1 => {
+            app.eq_column_selected -= 1;
         }
-        KeyCode::Right | KeyCode::Char('l') => {
-            if app.eq_column_selected < 4 { // Freq(1), Gain(2), Q(3), Type(4)
-                app.eq_column_selected += 1;
-            }
+        KeyCode::Right | KeyCode::Char('l') if app.eq_column_selected < 4 => {
+            // Freq(1), Gain(2), Q(3), Type(4)
+            app.eq_column_selected += 1;
         }
-        KeyCode::Down | KeyCode::Char('j') => {
-            if !app.eq_bands.is_empty() {
-                app.eq_band_selected = (app.eq_band_selected + 1) % app.eq_bands.len();
-            }
+        KeyCode::Down | KeyCode::Char('j') if !app.eq_bands.is_empty() => {
+            app.eq_band_selected = (app.eq_band_selected + 1) % app.eq_bands.len();
         }
-        KeyCode::Up | KeyCode::Char('k') => {
-            if !app.eq_bands.is_empty() {
-                app.eq_band_selected = app
-                    .eq_band_selected
-                    .checked_sub(1)
-                    .unwrap_or(app.eq_bands.len() - 1);
-            }
+        KeyCode::Up | KeyCode::Char('k') if !app.eq_bands.is_empty() => {
+            app.eq_band_selected = app
+                .eq_band_selected
+                .checked_sub(1)
+                .unwrap_or(app.eq_bands.len() - 1);
         }
         KeyCode::Char('a') => {
             let freq = 1000.0;
@@ -90,25 +75,28 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
             let insert_at = (app.eq_band_selected + 1).min(app.eq_bands.len());
             app.eq_bands.insert(
                 insert_at,
-                EqBand { frequency: freq, gain, q, filter_type: ftype },
+                EqBand {
+                    frequency: freq,
+                    gain,
+                    q,
+                    filter_type: ftype,
+                },
             );
             app.eq_band_selected = insert_at;
             if let Err(e) = app.sync_bands() {
                 tracing::error!(%e, "Failed to sync EQ bands");
             }
         }
-        KeyCode::Char('d') => {
-            if app.last_key == Some('d') && !app.eq_bands.is_empty() {
-                app.eq_bands.remove(app.eq_band_selected);
-                if app.eq_band_selected >= app.eq_bands.len() {
-                    app.eq_band_selected = app.eq_bands.len().saturating_sub(1);
-                }
-                app.last_key = None;
-                if let Err(e) = app.sync_bands() {
-                    tracing::error!(%e, "Failed to sync EQ bands");
-                }
-                return;
+        KeyCode::Char('d') if app.last_key == Some('d') && !app.eq_bands.is_empty() => {
+            app.eq_bands.remove(app.eq_band_selected);
+            if app.eq_band_selected >= app.eq_bands.len() {
+                app.eq_band_selected = app.eq_bands.len().saturating_sub(1);
             }
+            app.last_key = None;
+            if let Err(e) = app.sync_bands() {
+                tracing::error!(%e, "Failed to sync EQ bands");
+            }
+            return;
         }
         KeyCode::Char('i') => {
             app.mode = Mode::Insert;
@@ -141,21 +129,17 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
                 app.pipeline.set_bypass(false);
             }
         }
-        KeyCode::Char('g') => {
-            if app.last_key == Some('g') && !app.eq_bands.is_empty() {
-                app.eq_band_selected = 0;
-                app.last_key = None;
-                return;
-            }
+        KeyCode::Char('g') if app.last_key == Some('g') && !app.eq_bands.is_empty() => {
+            app.eq_band_selected = 0;
+            app.last_key = None;
+            return;
         }
-        KeyCode::Char('r') => {
-            if !app.eq_bands.is_empty() {
-                let b = &mut app.eq_bands[app.eq_band_selected];
-                b.gain = 0.0;
-                b.q = 1.0;
-                if let Err(e) = app.sync_bands() {
-                    tracing::error!(%e, "Failed to sync EQ bands");
-                }
+        KeyCode::Char('r') if !app.eq_bands.is_empty() => {
+            let b = &mut app.eq_bands[app.eq_band_selected];
+            b.gain = 0.0;
+            b.q = 1.0;
+            if let Err(e) = app.sync_bands() {
+                tracing::error!(%e, "Failed to sync EQ bands");
             }
         }
         KeyCode::Char('R') => {
@@ -167,8 +151,10 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
                 tracing::error!(%e, "Failed to sync EQ bands");
             }
         }
-        KeyCode::Char('+') | KeyCode::Char('=') => {
-            if app.eq_bands.is_empty() { return; }
+        KeyCode::Char('+' | '=') => {
+            if app.eq_bands.is_empty() {
+                return;
+            }
             let b = &mut app.eq_bands[app.eq_band_selected];
             match app.eq_column_selected {
                 1 => b.frequency = (b.frequency + 50.0).min(20000.0),
@@ -188,7 +174,9 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
             }
         }
         KeyCode::Char('-') => {
-            if app.eq_bands.is_empty() { return; }
+            if app.eq_bands.is_empty() {
+                return;
+            }
             let b = &mut app.eq_bands[app.eq_band_selected];
             match app.eq_column_selected {
                 1 => b.frequency = (b.frequency - 50.0).max(20.0),
@@ -219,9 +207,9 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossterm::event::{KeyEvent, KeyModifiers};
     use crate::config::Config;
     use crate::pipeline::Pipeline;
+    use crossterm::event::{KeyEvent, KeyModifiers};
     use std::sync::Arc;
 
     #[test]
@@ -235,7 +223,10 @@ mod tests {
         assert_eq!(app.eq_column_selected, 1);
 
         // Move right with 'l'
-        handle_pipeline(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE), &mut app);
+        handle_pipeline(
+            KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE),
+            &mut app,
+        );
         assert_eq!(app.eq_column_selected, 2);
 
         // Move right with Right arrow
@@ -243,15 +234,24 @@ mod tests {
         assert_eq!(app.eq_column_selected, 3);
 
         // Move right to boundary
-        handle_pipeline(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE), &mut app);
+        handle_pipeline(
+            KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE),
+            &mut app,
+        );
         assert_eq!(app.eq_column_selected, 4);
 
         // Move right again (should clamp)
-        handle_pipeline(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE), &mut app);
+        handle_pipeline(
+            KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE),
+            &mut app,
+        );
         assert_eq!(app.eq_column_selected, 4);
 
         // Move left with 'h'
-        handle_pipeline(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE), &mut app);
+        handle_pipeline(
+            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
+            &mut app,
+        );
         assert_eq!(app.eq_column_selected, 3);
 
         // Move left with Left arrow
@@ -259,11 +259,17 @@ mod tests {
         assert_eq!(app.eq_column_selected, 2);
 
         // Move left to boundary
-        handle_pipeline(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE), &mut app);
+        handle_pipeline(
+            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
+            &mut app,
+        );
         assert_eq!(app.eq_column_selected, 1);
 
         // Move left again (should clamp)
-        handle_pipeline(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE), &mut app);
+        handle_pipeline(
+            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
+            &mut app,
+        );
         assert_eq!(app.eq_column_selected, 1);
     }
 
@@ -285,35 +291,59 @@ mod tests {
         app.eq_column_selected = 1; // Frequency
 
         // Bump frequency up
-        handle_pipeline(KeyEvent::new(KeyCode::Char('+'), KeyModifiers::NONE), &mut app);
+        handle_pipeline(
+            KeyEvent::new(KeyCode::Char('+'), KeyModifiers::NONE),
+            &mut app,
+        );
         assert_eq!(app.eq_bands[0].frequency, 1050.0);
 
         // Bump frequency down
-        handle_pipeline(KeyEvent::new(KeyCode::Char('-'), KeyModifiers::NONE), &mut app);
+        handle_pipeline(
+            KeyEvent::new(KeyCode::Char('-'), KeyModifiers::NONE),
+            &mut app,
+        );
         assert_eq!(app.eq_bands[0].frequency, 1000.0);
 
         // Switch to gain
         app.eq_column_selected = 2;
-        handle_pipeline(KeyEvent::new(KeyCode::Char('='), KeyModifiers::NONE), &mut app);
+        handle_pipeline(
+            KeyEvent::new(KeyCode::Char('='), KeyModifiers::NONE),
+            &mut app,
+        );
         assert_eq!(app.eq_bands[0].gain, 0.5);
 
-        handle_pipeline(KeyEvent::new(KeyCode::Char('-'), KeyModifiers::NONE), &mut app);
+        handle_pipeline(
+            KeyEvent::new(KeyCode::Char('-'), KeyModifiers::NONE),
+            &mut app,
+        );
         assert_eq!(app.eq_bands[0].gain, 0.0);
 
         // Switch to Q
         app.eq_column_selected = 3;
-        handle_pipeline(KeyEvent::new(KeyCode::Char('+'), KeyModifiers::NONE), &mut app);
+        handle_pipeline(
+            KeyEvent::new(KeyCode::Char('+'), KeyModifiers::NONE),
+            &mut app,
+        );
         assert_eq!(app.eq_bands[0].q, 1.1);
 
-        handle_pipeline(KeyEvent::new(KeyCode::Char('-'), KeyModifiers::NONE), &mut app);
+        handle_pipeline(
+            KeyEvent::new(KeyCode::Char('-'), KeyModifiers::NONE),
+            &mut app,
+        );
         assert_eq!(app.eq_bands[0].q, 1.0);
 
         // Switch to filter type
         app.eq_column_selected = 4;
-        handle_pipeline(KeyEvent::new(KeyCode::Char('+'), KeyModifiers::NONE), &mut app);
+        handle_pipeline(
+            KeyEvent::new(KeyCode::Char('+'), KeyModifiers::NONE),
+            &mut app,
+        );
         assert_eq!(app.eq_bands[0].filter_type, FilterType::LowShelf);
 
-        handle_pipeline(KeyEvent::new(KeyCode::Char('-'), KeyModifiers::NONE), &mut app);
+        handle_pipeline(
+            KeyEvent::new(KeyCode::Char('-'), KeyModifiers::NONE),
+            &mut app,
+        );
         assert_eq!(app.eq_bands[0].filter_type, FilterType::Peak);
     }
 
@@ -335,58 +365,82 @@ mod tests {
 
         // Test frequency column (1)
         app.eq_column_selected = 1;
-        handle_pipeline(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE), &mut app);
+        handle_pipeline(
+            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
+            &mut app,
+        );
         assert_eq!(app.mode, Mode::Insert);
         assert_eq!(app.cell_input.value(), "1000.0");
 
         // Test gain column (2)
         app.mode = Mode::Normal;
         app.eq_column_selected = 2;
-        handle_pipeline(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE), &mut app);
+        handle_pipeline(
+            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
+            &mut app,
+        );
         assert_eq!(app.cell_input.value(), "5.5");
 
         // Test Q column (3)
         app.mode = Mode::Normal;
         app.eq_column_selected = 3;
-        handle_pipeline(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE), &mut app);
+        handle_pipeline(
+            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
+            &mut app,
+        );
         assert_eq!(app.cell_input.value(), "1.00");
 
         // Test filter type column (4)
         app.mode = Mode::Normal;
         app.eq_column_selected = 4;
-        handle_pipeline(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE), &mut app);
+        handle_pipeline(
+            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
+            &mut app,
+        );
         assert_eq!(app.cell_input.value(), "PK");
     }
 
     #[test]
-    fn test_handle_devices_enter() {
+    fn test_handle_devices_connect_toggle() {
         let config = Arc::new(Config::default());
         let pipeline = Arc::new(Pipeline::new(48000.0));
         let mut app = App::new(config, pipeline);
         app.focused_block = FocusedBlock::Devices;
+        app.filter_node_id = Some(42); // simulate filter ready
         app.nodes.push(crate::state::NodeInfo {
             id: 123,
-            name: "Test Node".to_string(),
+            name: "Test Device".to_string(),
             description: "Test Description".to_string(),
             class: crate::state::DeviceClass::Speaker,
         });
         app.nodes_selected = 0;
 
+        // Connect device
         let result = handle_devices(
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
             &mut app,
         );
-
         assert!(result.is_some());
-        assert_eq!(app.bound_output_id, Some(123));
+        assert!(app.is_device_connected(123));
+        assert_eq!(app.connected_devices, vec![123]);
+
+        // Disconnect device
+        let result = handle_devices(
+            KeyEvent::new(KeyCode::Char('C'), KeyModifiers::NONE),
+            &mut app,
+        );
+        assert!(result.is_some());
+        assert!(!app.is_device_connected(123));
+        assert!(app.connected_devices.is_empty());
     }
 
     #[test]
-    fn test_handle_devices_enter_skips_eqtui() {
+    fn test_handle_devices_connect_skips_eqtui() {
         let config = Arc::new(Config::default());
         let pipeline = Arc::new(Pipeline::new(48000.0));
         let mut app = App::new(config, pipeline);
         app.focused_block = FocusedBlock::Devices;
+        app.filter_node_id = Some(42);
         app.nodes.push(crate::state::NodeInfo {
             id: 99,
             name: "eqtui Equalizer".to_string(),
@@ -396,12 +450,34 @@ mod tests {
         app.nodes_selected = 0;
 
         let result = handle_devices(
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
             &mut app,
         );
-
         assert!(result.is_none());
-        assert_eq!(app.bound_output_id, None);
+        assert!(app.connected_devices.is_empty());
+    }
+
+    #[test]
+    fn test_handle_devices_connect_no_filter_ready() {
+        let config = Arc::new(Config::default());
+        let pipeline = Arc::new(Pipeline::new(48000.0));
+        let mut app = App::new(config, pipeline);
+        app.focused_block = FocusedBlock::Devices;
+        // filter_node_id is None — not ready yet
+        app.nodes.push(crate::state::NodeInfo {
+            id: 123,
+            name: "Test Device".to_string(),
+            description: "Test Description".to_string(),
+            class: crate::state::DeviceClass::Speaker,
+        });
+        app.nodes_selected = 0;
+
+        let result = handle_devices(
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
+            &mut app,
+        );
+        // Should return None because filter isn't ready
+        assert!(result.is_none());
     }
 }
 

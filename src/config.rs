@@ -64,8 +64,8 @@ impl Default for NormalKeys {
 impl Default for InsertKeys {
     fn default() -> Self {
         Self {
-            confirm: '\n',     // Enter
-            cancel: '\x1b',    // Esc
+            confirm: '\n',  // Enter
+            cancel: '\x1b', // Esc
             bump_up: '+',
             bump_down: '-',
         }
@@ -76,17 +76,37 @@ fn default_layout() -> Flex {
     Flex::SpaceBetween
 }
 
-fn default_add_band() -> char { 'a' }
-fn default_delete_band() -> char { 'd' }
-fn default_insert_mode() -> char { 'i' }
-fn default_command_mode() -> char { ':' }
-fn default_visual_mode() -> char { 'v' }
-fn default_toggle_bypass() -> char { 'b' }
+fn default_add_band() -> char {
+    'a'
+}
+fn default_delete_band() -> char {
+    'd'
+}
+fn default_insert_mode() -> char {
+    'i'
+}
+fn default_command_mode() -> char {
+    ':'
+}
+fn default_visual_mode() -> char {
+    'v'
+}
+fn default_toggle_bypass() -> char {
+    'b'
+}
 
-fn default_confirm() -> char { '\n' }
-fn default_cancel() -> char { '\x1b' }
-fn default_bump_up() -> char { '+' }
-fn default_bump_down() -> char { '-' }
+fn default_confirm() -> char {
+    '\n'
+}
+fn default_cancel() -> char {
+    '\x1b'
+}
+fn default_bump_up() -> char {
+    '+'
+}
+fn default_bump_down() -> char {
+    '-'
+}
 
 impl Config {
     pub fn new(config_path: Option<PathBuf>) -> Self {

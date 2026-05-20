@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 use crate::AppResult;
 use crossterm::event::{self, Event as CrosstermEvent, KeyEventKind};
 
-// const TICK_FPS: f64 = 30.0;
-const TICK_FPS: f64 = 90.0;
+const TICK_FPS: f64 = 30.0;
+// const TICK_FPS: f64 = 90.0;
 
 #[derive(Clone, Debug)]
 pub enum Event {

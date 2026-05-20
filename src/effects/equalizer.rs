@@ -62,137 +62,26 @@ impl Equalizer {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn rms(samples: &[f32]) -> f32 {
-        let sum_sq: f32 = samples.iter().map(|s| s * s).sum();
-        (sum_sq / samples.len() as f32).sqrt()
-    }
-
-    #[test]
-    fn passthrough_bypassed() {
-        let eq = Equalizer::new(48000.0);
-        eq.set_bypass(true);
-        let input = vec![0.5_f32; 128];
-        let mut lo = vec![0.0_f32; 128];
-        let mut ro = vec![0.0_f32; 128];
-        eq.process(&input, &input, &mut lo, &mut ro);
-        assert_eq!(lo, input);
-        assert_eq!(ro, input);
-    }
-
-    #[test]
-    fn passthrough_no_bands() {
-        let eq = Equalizer::new(48000.0);
-        let input = vec![0.5_f32; 128];
-        let mut lo = vec![0.0_f32; 128];
-        let mut ro = vec![0.0_f32; 128];
-        eq.process(&input, &input, &mut lo, &mut ro);
-        assert_eq!(lo, input);
-    }
-
-    #[test]
-    fn unity_gain_peak() {
-        let eq = Equalizer::new(48000.0);
-        eq.set_bands(
-            &[EqBand { frequency: 1000.0, gain: 0.0, q: 1.0, filter_type: FilterType::Peak }],
-            48000.0,
-        )
-        .unwrap();
-        let n = 1024;
-        let input = vec![0.5_f32; n];
-        let mut lo = vec![0.0_f32; n];
-        let mut ro = vec![0.0_f32; n];
-        eq.process(&input, &input, &mut lo, &mut ro);
-        assert!((rms(&input) - rms(&lo)).abs() < 0.1);
-    }
-
-    #[test]
-    fn positive_gain_boosts() {
-        let eq = Equalizer::new(48000.0);
-        eq.set_bands(
-            &[EqBand { frequency: 1000.0, gain: 6.0, q: 1.0, filter_type: FilterType::Peak }],
-            48000.0,
-        )
-        .unwrap();
-        let n = 4096;
-        let freq = 1000.0;
-        let sr = 48000.0;
-        let input: Vec<f32> = (0..n)
-            .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / sr).sin())
-            .collect();
-        let mut lo = vec![0.0_f32; n];
-        let mut ro = vec![0.0_f32; n];
-        eq.process(&input, &input, &mut lo, &mut ro);
-        assert!(rms(&lo) > rms(&input) * 1.3, "expected boost, out_rms={:.3}", rms(&lo));
-    }
-
-    #[test]
-    fn negative_gain_cuts() {
-        let eq = Equalizer::new(48000.0);
-        eq.set_bands(
-            &[EqBand { frequency: 1000.0, gain: -6.0, q: 1.0, filter_type: FilterType::Peak }],
-            48000.0,
-        )
-        .unwrap();
-        let n = 4096;
-        let freq = 1000.0;
-        let sr = 48000.0;
-        let input: Vec<f32> = (0..n)
-            .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / sr).sin())
-            .collect();
-        let mut lo = vec![0.0_f32; n];
-        let mut ro = vec![0.0_f32; n];
-        eq.process(&input, &input, &mut lo, &mut ro);
-        assert!(rms(&lo) < rms(&input) * 0.7, "expected cut, out_rms={:.3}", rms(&lo));
-    }
-
-    #[test]
-    fn multiple_bands_chain() {
-        let eq = Equalizer::new(48000.0);
-        let bands = vec![
-            EqBand { frequency: 100.0, gain: 3.0, q: 1.0, filter_type: FilterType::LowShelf },
-            EqBand { frequency: 1000.0, gain: -4.0, q: 1.0, filter_type: FilterType::Peak },
-            EqBand { frequency: 8000.0, gain: 2.0, q: 0.7, filter_type: FilterType::HighShelf },
-        ];
-        eq.set_bands(&bands, 48000.0).unwrap();
-        let n = 512;
-        let input = vec![0.3_f32; n];
-        let mut lo = vec![0.0_f32; n];
-        let mut ro = vec![0.0_f32; n];
-        eq.process(&input, &input, &mut lo, &mut ro);
-        // Output should exist and not panic
-        assert!(lo.iter().all(|s| s.is_finite()));
-    }
-
-    #[test]
-    fn low_shelf_boosts_bass() {
-        let eq = Equalizer::new(48000.0);
-        eq.set_bands(
-            &[EqBand { frequency: 200.0, gain: 6.0, q: 0.71, filter_type: FilterType::LowShelf }],
-            48000.0,
-        )
-        .unwrap();
-        let n = 4096;
-        let freq = 50.0;
-        let sr = 48000.0;
-        let input: Vec<f32> = (0..n)
-            .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / sr).sin())
-            .collect();
-        let mut lo = vec![0.0_f32; n];
-        let mut ro = vec![0.0_f32; n];
-        eq.process(&input, &input, &mut lo, &mut ro);
-        assert!(rms(&lo) > 1.3, "low shelf should boost bass, got {:.3}", rms(&lo));
+impl Default for BiquadState {
+    fn default() -> Self {
+        Self {
+            x1: 0.0,
+            x2: 0.0,
+            y1: 0.0,
+            y2: 0.0,
+        }
     }
 }
 
 impl EffectPlugin for Equalizer {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "Equalizer"
     }
 
+    #[allow(
+        clippy::many_single_char_names,
+        reason = "short variable names like n/l/r/s/y are standard notation for biquad filter math — maps directly to the DSP literature and improves readability for audio engineers"
+    )]
     fn process(
         &self,
         left_in: &[f32],
@@ -238,7 +127,8 @@ impl EffectPlugin for Equalizer {
             for (band_i, coeffs) in bands.iter().enumerate() {
                 let s = &mut states_l[band_i];
                 let y = coeffs.b0 * l + coeffs.b1 * s.x1 + coeffs.b2 * s.x2
-                    - coeffs.a1 * s.y1 - coeffs.a2 * s.y2;
+                    - coeffs.a1 * s.y1
+                    - coeffs.a2 * s.y2;
                 s.x2 = s.x1;
                 s.x1 = l;
                 s.y2 = s.y1;
@@ -249,7 +139,8 @@ impl EffectPlugin for Equalizer {
             for (band_i, coeffs) in bands.iter().enumerate() {
                 let s = &mut states_r[band_i];
                 let y = coeffs.b0 * r + coeffs.b1 * s.x1 + coeffs.b2 * s.x2
-                    - coeffs.a1 * s.y1 - coeffs.a2 * s.y2;
+                    - coeffs.a1 * s.y1
+                    - coeffs.a2 * s.y2;
                 s.x2 = s.x1;
                 s.x1 = r;
                 s.y2 = s.y1;
@@ -356,13 +247,175 @@ fn biquad_coefficients(band: &EqBand, sample_rate: f32) -> BiquadCoeffs {
     BiquadCoeffs { b0, b1, b2, a1, a2 }
 }
 
-impl Default for BiquadState {
-    fn default() -> Self {
-        Self {
-            x1: 0.0,
-            x2: 0.0,
-            y1: 0.0,
-            y2: 0.0,
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rms(samples: &[f32]) -> f32 {
+        let sum_sq: f32 = samples.iter().map(|s| s * s).sum();
+        (sum_sq / samples.len() as f32).sqrt()
+    }
+
+    #[test]
+    fn passthrough_bypassed() {
+        let eq = Equalizer::new(48000.0);
+        eq.set_bypass(true);
+        let input = vec![0.5_f32; 128];
+        let mut lo = vec![0.0_f32; 128];
+        let mut ro = vec![0.0_f32; 128];
+        eq.process(&input, &input, &mut lo, &mut ro);
+        assert_eq!(lo, input);
+        assert_eq!(ro, input);
+    }
+
+    #[test]
+    fn passthrough_no_bands() {
+        let eq = Equalizer::new(48000.0);
+        let input = vec![0.5_f32; 128];
+        let mut lo = vec![0.0_f32; 128];
+        let mut ro = vec![0.0_f32; 128];
+        eq.process(&input, &input, &mut lo, &mut ro);
+        assert_eq!(lo, input);
+    }
+
+    #[test]
+    fn unity_gain_peak() {
+        let eq = Equalizer::new(48000.0);
+        eq.set_bands(
+            &[EqBand {
+                frequency: 1000.0,
+                gain: 0.0,
+                q: 1.0,
+                filter_type: FilterType::Peak,
+            }],
+            48000.0,
+        )
+        .unwrap();
+        let n = 1024;
+        let input = vec![0.5_f32; n];
+        let mut lo = vec![0.0_f32; n];
+        let mut ro = vec![0.0_f32; n];
+        eq.process(&input, &input, &mut lo, &mut ro);
+        assert!((rms(&input) - rms(&lo)).abs() < 0.1);
+    }
+
+    #[test]
+    fn positive_gain_boosts() {
+        let eq = Equalizer::new(48000.0);
+        eq.set_bands(
+            &[EqBand {
+                frequency: 1000.0,
+                gain: 6.0,
+                q: 1.0,
+                filter_type: FilterType::Peak,
+            }],
+            48000.0,
+        )
+        .unwrap();
+        let n = 4096;
+        let freq = 1000.0;
+        let sr = 48000.0;
+        let input: Vec<f32> = (0..n)
+            .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / sr).sin())
+            .collect();
+        let mut lo = vec![0.0_f32; n];
+        let mut ro = vec![0.0_f32; n];
+        eq.process(&input, &input, &mut lo, &mut ro);
+        assert!(
+            rms(&lo) > rms(&input) * 1.3,
+            "expected boost, out_rms={:.3}",
+            rms(&lo)
+        );
+    }
+
+    #[test]
+    fn negative_gain_cuts() {
+        let eq = Equalizer::new(48000.0);
+        eq.set_bands(
+            &[EqBand {
+                frequency: 1000.0,
+                gain: -6.0,
+                q: 1.0,
+                filter_type: FilterType::Peak,
+            }],
+            48000.0,
+        )
+        .unwrap();
+        let n = 4096;
+        let freq = 1000.0;
+        let sr = 48000.0;
+        let input: Vec<f32> = (0..n)
+            .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / sr).sin())
+            .collect();
+        let mut lo = vec![0.0_f32; n];
+        let mut ro = vec![0.0_f32; n];
+        eq.process(&input, &input, &mut lo, &mut ro);
+        assert!(
+            rms(&lo) < rms(&input) * 0.7,
+            "expected cut, out_rms={:.3}",
+            rms(&lo)
+        );
+    }
+
+    #[test]
+    fn multiple_bands_chain() {
+        let eq = Equalizer::new(48000.0);
+        let bands = vec![
+            EqBand {
+                frequency: 100.0,
+                gain: 3.0,
+                q: 1.0,
+                filter_type: FilterType::LowShelf,
+            },
+            EqBand {
+                frequency: 1000.0,
+                gain: -4.0,
+                q: 1.0,
+                filter_type: FilterType::Peak,
+            },
+            EqBand {
+                frequency: 8000.0,
+                gain: 2.0,
+                q: 0.7,
+                filter_type: FilterType::HighShelf,
+            },
+        ];
+        eq.set_bands(&bands, 48000.0).unwrap();
+        let n = 512;
+        let input = vec![0.3_f32; n];
+        let mut lo = vec![0.0_f32; n];
+        let mut ro = vec![0.0_f32; n];
+        eq.process(&input, &input, &mut lo, &mut ro);
+        // Output should exist and not panic
+        assert!(lo.iter().all(|s| s.is_finite()));
+    }
+
+    #[test]
+    fn low_shelf_boosts_bass() {
+        let eq = Equalizer::new(48000.0);
+        eq.set_bands(
+            &[EqBand {
+                frequency: 200.0,
+                gain: 6.0,
+                q: 0.71,
+                filter_type: FilterType::LowShelf,
+            }],
+            48000.0,
+        )
+        .unwrap();
+        let n = 4096;
+        let freq = 50.0;
+        let sr = 48000.0;
+        let input: Vec<f32> = (0..n)
+            .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / sr).sin())
+            .collect();
+        let mut lo = vec![0.0_f32; n];
+        let mut ro = vec![0.0_f32; n];
+        eq.process(&input, &input, &mut lo, &mut ro);
+        assert!(
+            rms(&lo) > 1.3,
+            "low shelf should boost bass, got {:.3}",
+            rms(&lo)
+        );
     }
 }

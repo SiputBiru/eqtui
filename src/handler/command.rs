@@ -29,6 +29,10 @@ fn exec(cmd: &str, app: &mut App) {
     let parts: Vec<&str> = cmd.split_whitespace().collect();
     match parts.first().copied() {
         Some("q") => app.quit(),
+        #[allow(
+            clippy::match_same_arms,
+            reason = "placeholder arm for future 'save preset' implementation — keeping it visible as a reminder while matching the wildcard behaviour"
+        )]
         Some("w") => {
             // Save preset (placeholder)
         }
@@ -44,10 +48,7 @@ fn exec(cmd: &str, app: &mut App) {
             app.eq_bypass = !app.eq_bypass;
         }
         Some("add") => {
-            let freq = parts
-                .get(1)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(1000.0);
+            let freq = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(1000.0);
             app.eq_bands.push(EqBand {
                 frequency: freq,
                 gain: 0.0,

@@ -79,7 +79,6 @@ fn main() -> AppResult<()> {
         while let Ok(event) = from_pw.try_recv() {
             app.handle_pw_event(event);
         }
-
         match tui.events.next()? {
             eqtui::event::Event::Tick => app.tick(),
             eqtui::event::Event::Key(key) => {
@@ -92,7 +91,6 @@ fn main() -> AppResult<()> {
             }
             eqtui::event::Event::Resize(_, _) => {}
         }
-
         tui.draw(|frame| tui::render(&app, frame))?;
     }
 

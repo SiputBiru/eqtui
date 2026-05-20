@@ -20,6 +20,7 @@ use crate::state::{DeviceClass, NodeInfo, PwCommand, PwEvent};
 const DEFAULT_SAMPLE_RATE: u32 = 48000;
 const DEFAULT_CHANNELS: u32 = 2;
 const DEFAULT_N_SAMPLES: u32 = 1024;
+const DSP_NODE_NAME: &str = "eqtui-dsp";
 
 // Thin helpers for pw_properties — PipeWire copies strings internally, so
 // CString temporaries are safe to drop after each call.
@@ -27,10 +28,8 @@ pub(crate) struct Props(*mut pipewire_sys::pw_properties);
 
 impl Props {
     pub(crate) fn new(key: &str, val: &str) -> Self {
-        let k = CString::new(key)
-            .expect("Props::new key should not contain null bytes");
-        let v = CString::new(val)
-            .expect("Props::new val should not contain null bytes");
+        let k = CString::new(key).expect("Props::new key should not contain null bytes");
+        let v = CString::new(val).expect("Props::new val should not contain null bytes");
         let p = unsafe {
             pipewire_sys::pw_properties_new(k.as_ptr(), v.as_ptr(), ptr::null::<c_char>())
         };
@@ -38,10 +37,8 @@ impl Props {
     }
 
     pub(crate) fn set(&self, key: &str, val: &str) {
-        let k = CString::new(key)
-            .expect("Props::set key should not contain null bytes");
-        let v = CString::new(val)
-            .expect("Props::set val should not contain null bytes");
+        let k = CString::new(key).expect("Props::set key should not contain null bytes");
+        let v = CString::new(val).expect("Props::set val should not contain null bytes");
         unsafe {
             pipewire_sys::pw_properties_set(self.0, k.as_ptr(), v.as_ptr());
         }
@@ -67,11 +64,15 @@ impl Drop for Props {
 // Filter callbacks
 struct FilterData {
     pipeline: Arc<Pipeline>,
+    filter_ptr: *mut pipewire_sys::pw_filter,
+    null_sink_id: Option<u32>,
     in_left: *mut c_void,
     in_right: *mut c_void,
     out_left: *mut c_void,
     out_right: *mut c_void,
     tx: mpsc::Sender<PwEvent>,
+    monitor_links_created: Cell<bool>,
+    filter_ready_sent: Cell<bool>,
 }
 
 pub(crate) fn process_buffers(
@@ -136,7 +137,42 @@ unsafe extern "C" fn state_changed_cb(
     unsafe {
         let fd = &*(data as *const FilterData);
         let state_str = state_name_for(new).to_string();
-        let _ = fd.tx.send(PwEvent::FilterStateChanged(state_str));
+        let _ = fd.tx.send(PwEvent::FilterStateChanged(state_str.clone()));
+
+        // When the filter reaches PAUSED state, its ports are registered.
+        // We link here because STREAMING may never be reached if there
+        // are no links to pull/push data.
+        if (new == pipewire_sys::pw_filter_state_PW_FILTER_STATE_PAUSED
+            || new == pipewire_sys::pw_filter_state_PW_FILTER_STATE_STREAMING)
+            && !fd.monitor_links_created.get()
+        {
+            let filter_id = pipewire_sys::pw_filter_get_node_id(fd.filter_ptr);
+            if filter_id != 0 && filter_id != pipewire_sys::PW_ID_ANY {
+                fd.monitor_links_created.set(true);
+                tracing::info!(filter_id, "Filter reached {}, creating links", state_str);
+
+                // Send the filter's node ID to the TUI so it can issue
+                // ConnectDevice / DisconnectDevice commands.
+                if !fd.filter_ready_sent.get() {
+                    fd.filter_ready_sent.set(true);
+                    let _ = fd.tx.send(PwEvent::FilterReady { node_id: filter_id });
+                }
+
+                // Capture from null sink monitor ports
+                if let Some(ns_id) = fd.null_sink_id {
+                    create_monitor_links(ns_id, filter_id);
+                }
+
+                // Output links are created on-demand by the TUI via
+                // ConnectDevice / DisconnectDevice commands.
+            } else {
+                tracing::warn!(
+                    filter_id,
+                    "Filter reached {}, but ID is not yet valid",
+                    state_str
+                );
+            }
+        }
     }
 }
 
@@ -202,6 +238,7 @@ struct NullSinkListenerData {
     core_raw: *mut pipewire_sys::pw_core,
     pipeline: Arc<Pipeline>,
     filter_cell_ptr: *mut Cell<Option<FilterHandle>>,
+    null_sink_id_cell_ptr: *mut Cell<Option<u32>>,
     filter_created: Cell<bool>,
 }
 
@@ -219,7 +256,7 @@ impl NullSinkHandle {
     /// Destroy the null-audio-sink proxy and all listener resources.
     ///
     /// # Safety
-    /// Must be called from the PipeWire mainloop thread before the core
+    /// Must be called from the `PipeWire` mainloop thread before the core
     /// is disconnected. All stored raw pointers must be valid (non-null)
     /// or null (which are safely ignored).
     unsafe fn destroy(self) {
@@ -256,25 +293,24 @@ unsafe extern "C" fn bound_cb(data: *mut c_void, global_id: u32) {
     unsafe {
         let nd = &*data.cast::<NullSinkListenerData>();
 
-        // Inform the TUI that the null sink is now live with its real id.
-        let _ = nd
-            .tx
-            .send(PwEvent::NullSinkCreated { module_id: global_id });
+        // Store the global id for manual linking later.
+        (*nd.null_sink_id_cell_ptr).set(Some(global_id));
 
-        // Only create the initial filter once. Subsequent filter
-        // recreations happen through the PwCommand::SetTarget handler
-        // in the mainloop command channel.
+        // Inform the TUI that the null sink is now live with its real id.
+        let _ = nd.tx.send(PwEvent::NullSinkCreated {
+            module_id: global_id,
+        });
+
+        // Only create the initial filter once. Device routing is handled
+        // by ConnectDevice / DisconnectDevice commands from the TUI.
         if !nd.filter_created.get() {
             nd.filter_created.set(true);
-            let handle = create_eq_filter(
-                nd.core_raw,
-                &nd.pipeline,
-                &nd.tx,
-                Some(global_id),
-            );
+            let handle = create_eq_filter(nd.core_raw, &nd.pipeline, &nd.tx, Some(global_id));
             if let Some(h) = handle {
                 (*nd.filter_cell_ptr).set(Some(h));
             }
+            // Monitor links are created by state_changed_cb when the
+            // filter reaches STREAMING state (ports guaranteed ready).
         }
     }
 }
@@ -293,16 +329,18 @@ fn create_null_sink(
     let props = Props::new("factory.name", "support.null-audio-sink");
     props.set("media.class", "Audio/Sink");
     props.set("node.name", "eqtui");
-    props.set("node.description", "eqtui Equalizer");
+    props.set("node.description", "eqtui (Virtual Sink)");
     props.set("audio.position", "FL,FR");
     props.set("monitor.channel-volumes", "false");
     props.set("monitor.passthrough", "true");
     // Lowest session priority so the null sink does not steal the
     // default-sink role from the user's real output device.
     props.set("priority.session", "0");
+    // Mark as passive so WirePlumber doesn't auto-connect new streams to
+    // it unless explicitly requested by the user.
+    props.set("node.passive", "true");
 
-    let factory_cstr =
-        CString::new("adapter").expect("factory name should not contain null bytes");
+    let factory_cstr = CString::new("adapter").expect("factory name should not contain null bytes");
     let type_cstr =
         CString::new("PipeWire:Interface:Node").expect("type string should not contain null bytes");
 
@@ -313,16 +351,13 @@ fn create_null_sink(
     // All CString pointers remain live for the duration of the FFI call.
     // props.into_raw() transfers ownership of the pw_properties into
     // pw_core_create_object (PipeWire copies the dict internally).
-    let iface = core_raw as *mut libspa_sys::spa_interface;
-    let methods = unsafe { (*iface).cb.funcs as *const pipewire_sys::pw_core_methods };
-    let create_fn = match unsafe { (*methods).create_object } {
-        Some(f) => f,
-        None => {
-            let _ = tx.send(PwEvent::NullSinkError(
-                "core create_object method not available".into(),
-            ));
-            return None;
-        }
+    let iface = core_raw.cast::<libspa_sys::spa_interface>();
+    let methods = unsafe { (*iface).cb.funcs.cast::<pipewire_sys::pw_core_methods>() };
+    let Some(create_fn) = (unsafe { (*methods).create_object }) else {
+        let _ = tx.send(PwEvent::NullSinkError(
+            "core create_object method not available".into(),
+        ));
+        return None;
     };
 
     let proxy_ptr = unsafe {
@@ -331,7 +366,7 @@ fn create_null_sink(
             factory_cstr.as_ptr(),
             type_cstr.as_ptr(),
             pipewire_sys::PW_VERSION_NODE,
-            props.into_raw() as *const libspa_sys::spa_dict,
+            props.into_raw().cast::<libspa_sys::spa_dict>(),
             0,
         )
     };
@@ -346,7 +381,7 @@ fn create_null_sink(
     // The returned void pointer is actually a pw_proxy.
     // The bound_cb will learn the real (server-assigned) global id when the
     // proxy is bound; we send NullSinkCreated from there, not here.
-    let proxy = proxy_ptr as *mut pipewire_sys::pw_proxy;
+    let proxy = proxy_ptr.cast::<pipewire_sys::pw_proxy>();
 
     Some(NullSinkHandle {
         proxy,
@@ -361,7 +396,7 @@ fn create_eq_filter(
     core_raw: *mut pipewire_sys::pw_core,
     pipeline: &Arc<Pipeline>,
     tx: &mpsc::Sender<PwEvent>,
-    target_node_id: Option<u32>,
+    null_sink_id: Option<u32>,
 ) -> Option<FilterHandle> {
     // Follow EasyEffects' pattern: do NOT set media.class on pw_filter nodes.
     // Wiremix's monitor_node() only binds nodes with an exact media.class match
@@ -372,20 +407,17 @@ fn create_eq_filter(
     let props = Props::new("media.type", "Audio");
     props.set("media.category", "Duplex");
     props.set("media.role", "DSP");
-    props.set("node.name", "eqtui");
-    props.set("node.description", "eqtui Equalizer");
+    props.set("node.name", DSP_NODE_NAME);
+    props.set("node.description", "eqtui (Processor)");
     // Mark as virtual so WirePlumber doesn't auto-promote this filter to
     // the default sink, which would steal audio streams and disrupt other
     // PipeWire clients (e.g. wiremix) that are monitoring the graph.
     props.set("node.virtual", "true");
     // Lowest session priority – extra guard against becoming default.
     props.set("priority.session", "0");
-    if let Some(id) = target_node_id {
-        props.set("node.target", &id.to_string());
-    }
 
-    let name_cstr = CString::new("eqtui")
-        .expect("static filter name should not contain null");
+    let name_cstr =
+        CString::new(DSP_NODE_NAME).expect("static filter name should not contain null");
     let filter =
         unsafe { pipewire_sys::pw_filter_new(core_raw, name_cstr.as_ptr(), props.into_raw()) };
 
@@ -396,6 +428,7 @@ fn create_eq_filter(
 
     let in_left = unsafe {
         let p = Props::new("port.name", "input_FL");
+        p.set("object.path", "input_FL");
         p.set("audio.channel", "FL");
         p.set("format.dsp", "32 bit float mono audio");
         pipewire_sys::pw_filter_add_port(
@@ -410,6 +443,7 @@ fn create_eq_filter(
     };
     let in_right = unsafe {
         let p = Props::new("port.name", "input_FR");
+        p.set("object.path", "input_FR");
         p.set("audio.channel", "FR");
         p.set("format.dsp", "32 bit float mono audio");
         pipewire_sys::pw_filter_add_port(
@@ -424,6 +458,7 @@ fn create_eq_filter(
     };
     let out_left = unsafe {
         let p = Props::new("port.name", "output_FL");
+        p.set("object.path", "output_FL");
         p.set("audio.channel", "FL");
         p.set("format.dsp", "32 bit float mono audio");
         pipewire_sys::pw_filter_add_port(
@@ -438,6 +473,7 @@ fn create_eq_filter(
     };
     let out_right = unsafe {
         let p = Props::new("port.name", "output_FR");
+        p.set("object.path", "output_FR");
         p.set("audio.channel", "FR");
         p.set("format.dsp", "32 bit float mono audio");
         pipewire_sys::pw_filter_add_port(
@@ -458,11 +494,15 @@ fn create_eq_filter(
 
     let filter_data = Box::new(FilterData {
         pipeline: pipeline.clone(),
+        filter_ptr: filter,
+        null_sink_id,
         in_left,
         in_right,
         out_left,
         out_right,
         tx: tx.clone(),
+        monitor_links_created: Cell::new(false),
+        filter_ready_sent: Cell::new(false),
     });
     let filter_data_ptr = Box::into_raw(filter_data);
 
@@ -492,23 +532,20 @@ fn create_eq_filter(
     position[1] = libspa_sys::SPA_AUDIO_CHANNEL_FR;
     audio_info.set_position(position);
 
-    let values: Vec<u8> =
-        match spa::pod::serialize::PodSerializer::serialize(
-            std::io::Cursor::new(Vec::new()),
-            &spa::pod::Value::Object(spa::pod::Object {
-                type_: libspa_sys::SPA_TYPE_OBJECT_Format,
-                id: libspa_sys::SPA_PARAM_EnumFormat,
-                properties: audio_info.into(),
-            }),
-        ) {
-            Ok(v) => v.0.into_inner(),
-            Err(e) => {
-                let _ = tx.send(PwEvent::Error(format!(
-                    "SPA pod serialization failed: {e}"
-                )));
-                return None;
-            }
-        };
+    let values: Vec<u8> = match spa::pod::serialize::PodSerializer::serialize(
+        std::io::Cursor::new(Vec::new()),
+        &spa::pod::Value::Object(spa::pod::Object {
+            type_: libspa_sys::SPA_TYPE_OBJECT_Format,
+            id: libspa_sys::SPA_PARAM_EnumFormat,
+            properties: audio_info.into(),
+        }),
+    ) {
+        Ok(v) => v.0.into_inner(),
+        Err(e) => {
+            let _ = tx.send(PwEvent::Error(format!("SPA pod serialization failed: {e}")));
+            return None;
+        }
+    };
 
     let Some(pod_ref) = spa::pod::Pod::from_bytes(&values) else {
         let _ = tx.send(PwEvent::Error("pod from_bytes failed".into()));
@@ -545,6 +582,110 @@ fn create_eq_filter(
         filter_data_ptr,
         listener_ptr,
         events_ptr,
+    })
+}
+
+fn create_monitor_links(out_node_id: u32, in_node_id: u32) {
+    let links = [("monitor_FL", "input_FL"), ("monitor_FR", "input_FR")];
+
+    for (out_port, in_port) in &links {
+        let out_spec = format!("{out_node_id}:{out_port}");
+        let in_spec = format!("{in_node_id}:{in_port}");
+
+        tracing::info!(%out_spec, %in_spec, "Calling pw-link for monitor link");
+
+        let status = std::process::Command::new("pw-link")
+            .arg(&out_spec)
+            .arg(&in_spec)
+            .status();
+
+        match status {
+            Ok(s) if s.success() => {
+                tracing::info!(%out_spec, %in_spec, "pw-link monitor success");
+            }
+            Ok(s) => {
+                tracing::error!(%out_spec, %in_spec, "pw-link monitor failed with status: {s}");
+            }
+            Err(e) => {
+                tracing::error!(%out_spec, %in_spec, "failed to execute pw-link: {e}");
+            }
+        }
+    }
+}
+
+/// Create `PipeWire` links from the DSP filter's output ports to a target
+/// device's playback ports using `pw-link`.
+fn create_device_output_links(filter_id: u32, device_id: u32) {
+    let links = [("output_FL", "playback_FL"), ("output_FR", "playback_FR")];
+
+    for (out_port, in_port) in &links {
+        let out_spec = format!("{filter_id}:{out_port}");
+        let in_spec = format!("{device_id}:{in_port}");
+
+        tracing::info!(%out_spec, %in_spec, "Calling pw-link for output link");
+
+        let status = std::process::Command::new("pw-link")
+            .arg(&out_spec)
+            .arg(&in_spec)
+            .status();
+
+        match status {
+            Ok(s) if s.success() => {
+                tracing::info!(%out_spec, %in_spec, "pw-link output success");
+            }
+            Ok(s) => {
+                tracing::error!(%out_spec, %in_spec, "pw-link output failed with status: {s}");
+            }
+            Err(e) => {
+                tracing::error!(%out_spec, %in_spec, "failed to execute pw-link: {e}");
+            }
+        }
+    }
+}
+
+/// Remove `PipeWire` links between the DSP filter's output ports and a
+/// target device's playback ports using `pw-link -d`.
+fn remove_device_output_links(filter_id: u32, device_id: u32) {
+    let links = [("output_FL", "playback_FL"), ("output_FR", "playback_FR")];
+
+    for (out_port, in_port) in &links {
+        let out_spec = format!("{filter_id}:{out_port}");
+        let in_spec = format!("{device_id}:{in_port}");
+
+        tracing::info!(%out_spec, %in_spec, "Calling pw-link -d to remove output link");
+
+        let status = std::process::Command::new("pw-link")
+            .arg("-d")
+            .arg(&out_spec)
+            .arg(&in_spec)
+            .status();
+
+        match status {
+            Ok(s) if s.success() => {
+                tracing::info!(%out_spec, %in_spec, "pw-link -d success");
+            }
+            Ok(s) => {
+                tracing::error!(%out_spec, %in_spec, "pw-link -d failed with status: {s}");
+            }
+            Err(e) => {
+                tracing::error!(%out_spec, %in_spec, "failed to execute pw-link -d: {e}");
+            }
+        }
+    }
+}
+
+/// Check whether any `PipeWire` link routes audio INTO the null sink's
+/// `playback_FL` or `playback_FR` ports.  Returns `true` if at least one
+/// audio source is connected to the null-sink input.
+fn check_null_sink_input_source(null_sink_id: u32) -> bool {
+    let Ok(output) = std::process::Command::new("pw-link").arg("-I").output() else {
+        return false;
+    };
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    text.lines().any(|line| {
+        line.contains(&format!("-> {null_sink_id}:playback_FL"))
+            || line.contains(&format!("-> {null_sink_id}:playback_FR"))
     })
 }
 
@@ -624,9 +765,24 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
 
     let tx_snapshot = tx.clone();
     let nodes_timer = nodes.clone();
+
+    // Declare cells BEFORE the timer so they can be captured.
+    // Use Rc so the timer closure and the null-sink listener can share.
+    let null_sink_id_cell: Rc<Cell<Option<u32>>> = Rc::new(Cell::new(None));
+
+    let ns_timer = null_sink_id_cell.clone();
     let timer = mainloop.loop_().add_timer(move |_| {
         let list: Vec<NodeInfo> = nodes_timer.borrow().iter().cloned().collect();
         let _ = tx_snapshot.send(PwEvent::NodeList(list));
+
+        // Poll whether an audio source is linked to the null sink's
+        // playback ports.  `pw-link -I` lists all links as
+        //   {out_id}:{out_port} -> {in_id}:{in_port}
+        // We check if any link targets the null sink's input.
+        if let Some(ns_id) = ns_timer.get() {
+            let has_source = check_null_sink_input_source(ns_id);
+            let _ = tx_snapshot.send(PwEvent::NullSinkInputState { has_source });
+        }
     });
     timer.update_timer(Some(Duration::from_millis(500)), None);
 
@@ -641,77 +797,66 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
     // discover eqtui as a selectable Audio/Sink.
     let nullsink_handle = create_null_sink(core_raw, &tx);
 
-    match nullsink_handle {
-        Some(mut handle) => {
-            // Heap-allocate listener data. This Box is leaked into a raw
-            // pointer and freed during shutdown (NullSinkHandle::destroy).
-            let listener_data = Box::new(NullSinkListenerData {
-                tx: tx.clone(),
-                core_raw,
-                pipeline: pipeline.clone(),
-                // Safety: filter_cell lives on the stack in run(), which
-                // outlives the mainloop (only quits on Terminate).
-                filter_cell_ptr: &filter_cell
-                    as *const Cell<Option<FilterHandle>>
-                    as *mut Cell<Option<FilterHandle>>,
-                filter_created: Cell::new(false),
-            });
-            let data_ptr = Box::into_raw(listener_data);
+    if let Some(mut handle) = nullsink_handle {
+        // Heap-allocate listener data. This Box is leaked into a raw
+        // pointer and freed during shutdown (NullSinkHandle::destroy).
+        let listener_data = Box::new(NullSinkListenerData {
+            tx: tx.clone(),
+            core_raw,
+            pipeline: pipeline.clone(),
+            // Safety: cell pointers live on the stack in run(), which
+            // outlives the mainloop (only quits on Terminate).
+            filter_cell_ptr: (&raw const filter_cell).cast_mut(),
+            null_sink_id_cell_ptr: Rc::as_ptr(&null_sink_id_cell).cast_mut(),
+            filter_created: Cell::new(false),
+        });
+        let data_ptr = Box::into_raw(listener_data);
 
-            // Allocate spa_hook for the proxy listener.
-            let listener_box =
-                Box::new(unsafe { mem::zeroed::<libspa_sys::spa_hook>() });
-            let listener_ptr = Box::into_raw(listener_box);
+        // Allocate spa_hook for the proxy listener.
+        let listener_box = Box::new(unsafe { mem::zeroed::<libspa_sys::spa_hook>() });
+        let listener_ptr = Box::into_raw(listener_box);
 
-            // Set up pw_proxy_events with the bound callback.  When the
-            // null-sink proxy is bound, bound_cb reads the global id and
-            // creates the equalizer filter wired to it.
-            let mut events_box =
-                Box::new(unsafe { mem::zeroed::<pipewire_sys::pw_proxy_events>() });
-            events_box.version = pipewire_sys::PW_VERSION_PROXY_EVENTS;
-            events_box.bound = Some(bound_cb);
-            let events_ptr = Box::into_raw(events_box);
+        // Set up pw_proxy_events with the bound callback.  When the
+        // null-sink proxy is bound, bound_cb reads the global id and
+        // creates the equalizer filter wired to it.
+        let mut events_box = Box::new(unsafe { mem::zeroed::<pipewire_sys::pw_proxy_events>() });
+        events_box.version = pipewire_sys::PW_VERSION_PROXY_EVENTS;
+        events_box.bound = Some(bound_cb);
+        let events_ptr = Box::into_raw(events_box);
 
-            // Safety: proxy is non-null (create_null_sink guarantees this).
-            // listener_ptr and events_ptr point to freshly allocated,
-            // heap-stable memory that outlives the proxy (freed on destroy).
-            // data_ptr holds cloned/ref-counted resources valid for the
-            // mainloop lifetime.
-            unsafe {
-                pipewire_sys::pw_proxy_add_listener(
-                    handle.proxy,
-                    listener_ptr,
-                    events_ptr,
-                    data_ptr.cast::<c_void>(),
-                );
-            }
-
-            // Stash the listener pointers in the handle for cleanup.
-            handle.listener_ptr = listener_ptr;
-            handle.events_ptr = events_ptr;
-            handle.data_ptr = data_ptr;
-            nullsink_cell.set(Some(handle));
+        // Safety: proxy is non-null (create_null_sink guarantees this).
+        // listener_ptr and events_ptr point to freshly allocated,
+        // heap-stable memory that outlives the proxy (freed on destroy).
+        // data_ptr holds cloned/ref-counted resources valid for the
+        // mainloop lifetime.
+        unsafe {
+            pipewire_sys::pw_proxy_add_listener(
+                handle.proxy,
+                listener_ptr,
+                events_ptr,
+                data_ptr.cast::<c_void>(),
+            );
         }
-        None => {
-            let _ = tx.send(PwEvent::NullSinkError(
-                "failed to create null-audio-sink node".into(),
-            ));
-            // Fallback: create filter without a null sink target so the
-            // equalizer remains functional even without wiremix visibility.
-            match create_eq_filter(core_raw, &pipeline, &tx, None) {
-                Some(handle) => {
-                    filter_cell.set(Some(handle));
-                }
-                None => {
-                    return;
-                }
-            }
+
+        // Stash the listener pointers in the handle for cleanup.
+        handle.listener_ptr = listener_ptr;
+        handle.events_ptr = events_ptr;
+        handle.data_ptr = data_ptr;
+        nullsink_cell.set(Some(handle));
+    } else {
+        let _ = tx.send(PwEvent::NullSinkError(
+            "failed to create null-audio-sink node".into(),
+        ));
+        // Fallback: create filter without a null sink target so the
+        // equalizer remains functional even without wiremix visibility.
+        if let Some(handle) = create_eq_filter(core_raw, &pipeline, &tx, None) {
+            filter_cell.set(Some(handle));
+        } else {
+            return;
         }
     }
 
     let mainloop_cmd = mainloop.clone();
-    let pipeline_cmd = pipeline.clone();
-    let tx_cmd = tx.clone();
 
     let _cmd_receiver = rx.attach(mainloop.loop_(), move |cmd| match cmd {
         PwCommand::Terminate => {
@@ -737,30 +882,21 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
             }
             mainloop_cmd.quit();
         }
-        PwCommand::SetTarget { node_id } => {
-            // Tear down old filter before creating a new one wired to the
-            // updated target device. The null sink persists — it is never
-            // recreated on target changes.
-            if let Some(handle) = filter_cell.take() {
-                // Safety: running on the mainloop thread while the core
-                // is still connected. FilterHandle::destroy deactivates,
-                // disconnects, and frees all resources.
-                unsafe {
-                    handle.destroy();
-                }
-            }
-            // Recreate with new target device
-            match create_eq_filter(core_raw, &pipeline_cmd, &tx_cmd, Some(node_id)) {
-                Some(handle) => {
-                    filter_cell.set(Some(handle));
-                    let _ = tx_cmd.send(PwEvent::FilterStateChanged("RECONNECTING".into()));
-                }
-                None => {
-                    let _ = tx_cmd.send(PwEvent::Error(
-                        "failed to recreate filter for target change".into(),
-                    ));
-                }
-            }
+        PwCommand::ConnectDevice { filter_id, node_id } => {
+            tracing::info!(
+                filter_id,
+                device_id = node_id,
+                "Connecting device to filter"
+            );
+            create_device_output_links(filter_id, node_id);
+        }
+        PwCommand::DisconnectDevice { filter_id, node_id } => {
+            tracing::info!(
+                filter_id,
+                device_id = node_id,
+                "Disconnecting device from filter"
+            );
+            remove_device_output_links(filter_id, node_id);
         }
     });
 

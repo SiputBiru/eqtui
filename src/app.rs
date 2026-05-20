@@ -5,7 +5,7 @@ use tui_input::Input;
 use crate::AppResult;
 use crate::config::Config;
 use crate::pipeline::Pipeline;
-use crate::state::{EqBand, NodeInfo, PwEvent};
+use crate::state::{EqBand, NodeInfo, PwCommand, PwEvent};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FocusedBlock {
@@ -42,7 +42,9 @@ pub struct App {
     pub peak_r: f32,
     pub null_sink_loaded: bool,
     pub null_sink_module_id: Option<u32>,
-    pub bound_output_id: Option<u32>,
+    pub connected_devices: Vec<u32>,
+    pub filter_node_id: Option<u32>,
+    pub null_sink_has_source: bool,
     pub filter_state: String,
 }
 
@@ -68,7 +70,9 @@ impl App {
             peak_r: -60.0,
             null_sink_loaded: false,
             null_sink_module_id: None,
-            bound_output_id: None,
+            connected_devices: Vec::new(),
+            filter_node_id: None,
+            null_sink_has_source: false,
             filter_state: "UNCONNECTED".to_string(),
         }
     }
@@ -84,7 +88,7 @@ impl App {
         new_l = new_l.clamp(-60.0, 0.0);
         new_r = new_r.clamp(-60.0, 0.0);
 
-        // Professional decay speed (approx 24dB/sec at 30fps)
+        // decay speed (approx 24dB/sec at 30fps)
         let decay_speed = 0.8;
 
         if new_l < self.peak_l {
@@ -130,9 +134,15 @@ impl App {
             PwEvent::FilterStateChanged(state) => {
                 self.filter_state = state;
             }
+            PwEvent::FilterReady { node_id } => {
+                self.filter_node_id = Some(node_id);
+            }
             PwEvent::NullSinkCreated { module_id } => {
                 self.null_sink_loaded = true;
                 self.null_sink_module_id = Some(module_id);
+            }
+            PwEvent::NullSinkInputState { has_source } => {
+                self.null_sink_has_source = has_source;
             }
             PwEvent::NullSinkError(e) => {
                 tracing::error!(%e, "Null sink error");
@@ -148,8 +158,30 @@ impl App {
     }
 
     pub fn sync_bands(&self) -> AppResult<()> {
-        self.pipeline
-            .set_bands(self.eq_bands.clone(), 48000.0)
+        self.pipeline.set_bands(self.eq_bands.clone(), 48000.0)
+    }
+
+    pub fn is_device_connected(&self, id: u32) -> bool {
+        self.connected_devices.contains(&id)
+    }
+
+    /// Toggle connection state for a device. Returns the PW command to
+    /// execute, or `None` if the filter isn't ready yet.
+    pub fn toggle_device_connection(&mut self, id: u32) -> Option<PwCommand> {
+        let filter_id = self.filter_node_id?;
+        if self.is_device_connected(id) {
+            self.connected_devices.retain(|d| *d != id);
+            Some(PwCommand::DisconnectDevice {
+                filter_id,
+                node_id: id,
+            })
+        } else {
+            self.connected_devices.push(id);
+            Some(PwCommand::ConnectDevice {
+                filter_id,
+                node_id: id,
+            })
+        }
     }
 }
 
@@ -169,11 +201,15 @@ mod tests {
         assert_eq!(app.eq_column_selected, 1);
         assert_eq!(app.cell_input.value(), "");
         assert!(!app.eq_bypass);
-        assert_eq!(app.peak_l, -60.0);
-        assert_eq!(app.peak_r, -60.0);
+
+        let margin = f32::EPSILON;
+        assert!((app.peak_l - (-60.0_f32)).abs() < margin);
+        assert!((app.peak_r - (-60.0_f32)).abs() < margin);
         assert!(!app.null_sink_loaded);
         assert_eq!(app.null_sink_module_id, None);
-        assert_eq!(app.bound_output_id, None);
+        assert!(app.connected_devices.is_empty());
+        assert_eq!(app.filter_node_id, None);
+        assert!(!app.null_sink_has_source);
         assert_eq!(app.filter_state, "UNCONNECTED");
     }
 }

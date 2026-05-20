@@ -602,7 +602,6 @@ dependencies = [
  "pipewire-sys",
  "ratatui",
  "serde",
- "serde_json",
  "toml",
  "tracing",
  "tracing-error",

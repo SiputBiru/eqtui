@@ -72,7 +72,7 @@ pub fn render(_app: &App, frame: &mut Frame, area: Rect) {
 
     let datasets = vec![
         Dataset::default()
-            .name("Target")
+            .name("PEQdB Diamond β Target")
             // .marker(symbols::Marker::Braille)
             .marker(symbols::Marker::Braille)
             .graph_type(GraphType::Line)
@@ -98,7 +98,7 @@ pub fn render(_app: &App, frame: &mut Frame, area: Rect) {
     let chart = Chart::new(datasets)
         .block(
             Block::default()
-                .title(" Frequency Response [WIP] - PEQdB Diamond β Target ")
+                .title(" Frequency Response [WIP] - Placeholder")
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::DarkGray)),
         )
