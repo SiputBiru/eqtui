@@ -52,7 +52,8 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
 
     let nodes: Rc<std::cell::RefCell<Vec<NodeInfo>>> = Rc::new(std::cell::RefCell::new(Vec::new()));
 
-    let nodes_reg = nodes.clone();
+    let nodes_reg_add = nodes.clone();
+    let nodes_reg_rem = nodes.clone();
     let _reg_listener = registry
         .add_listener_local()
         .global(move |global| {
@@ -80,7 +81,7 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
                         DeviceClass::Speaker
                     };
 
-                    nodes_reg.borrow_mut().push(NodeInfo {
+                    nodes_reg_add.borrow_mut().push(NodeInfo {
                         id: global.id,
                         name,
                         description,
@@ -88,6 +89,9 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
                     });
                 }
             }
+        })
+        .global_remove(move |id| {
+            nodes_reg_rem.borrow_mut().retain(|n| n.id != id);
         })
         .register();
 

@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use tui_input::Input;
 
+use crate::AppResult;
 use crate::client::DaemonClient;
 use crate::config::Config;
 use crate::profiles::{self, Profile};
 use crate::protocol::PushEvent;
 use crate::state::{EqBand, FilterState, NodeInfo, NullSinkState};
-use crate::AppResult;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FocusedBlock {
@@ -101,7 +101,10 @@ impl App {
             nodes_selected: 0,
             pw_connected: false,
             command_input: String::new(),
-            eq: EqState { bands, ..EqState::default() },
+            eq: EqState {
+                bands,
+                ..EqState::default()
+            },
             preamp,
             profiles,
             active_profile: active,
@@ -235,7 +238,7 @@ impl App {
             client.set_preamp(self.preamp)?;
         }
         if let Some(p) = self.profiles.get_mut(self.active_profile) {
-            p.bands = self.eq.bands.clone();
+            p.bands.clone_from(&self.eq.bands);
             p.preamp = self.preamp;
         }
         profiles::save(&self.profiles);
@@ -270,21 +273,22 @@ impl App {
     }
 
     pub fn switch_profile(&mut self, dir: isize) {
+        #[allow(clippy::cast_possible_wrap)]
         let count = self.profiles.len() as isize;
         if count == 0 {
             return;
         }
 
-        // Save current bands into the profile we're leaving.
         if let Some(p) = self.profiles.get_mut(self.active_profile) {
-            p.bands = self.eq.bands.clone();
+            p.bands.clone_from(&self.eq.bands);
             p.preamp = self.preamp;
         }
+        #[allow(clippy::cast_possible_wrap)]
         let idx = (self.active_profile as isize + dir).rem_euclid(count) as usize;
 
         if let Some(p) = self.profiles.get(idx) {
             self.active_profile = idx;
-            self.eq.bands = p.bands.clone();
+            self.eq.bands.clone_from(&p.bands);
             self.preamp = p.preamp;
             self.eq.band_selected = 0;
         }
@@ -294,7 +298,6 @@ impl App {
         self.connected_devices.contains(&id)
     }
 
-    /// Toggle a device link. No-op when daemon is disconnected (tests).
     pub fn toggle_device_connection(&mut self, id: u32) -> AppResult<()> {
         if self.filter_node_id.is_none() {
             return Ok(());
@@ -374,5 +377,32 @@ mod tests {
         assert_eq!(app.filter_node_id, None);
         assert!(!app.null_sink.has_source());
         assert_eq!(app.filter_state.to_string(), "UNCONNECTED");
+    }
+
+    #[test]
+    fn switch_profile_updates_memory_only() {
+        let config = std::sync::Arc::new(crate::config::Config::default());
+        let mut app = App::new_test(config);
+
+        // Ensure have 2 profiles
+        app.profiles.push(crate::profiles::Profile {
+            name: "Profile 2".into(),
+            bands: vec![],
+            preamp: 0.0,
+        });
+
+        // Setup profile 2 with different bands
+        app.profiles[1].bands = vec![crate::state::EqBand {
+            frequency: 500.0,
+            gain: 3.0,
+            q: 1.0,
+            filter_type: crate::state::FilterType::Peak,
+        }];
+
+        // Switch to profile 2
+        app.switch_profile(1);
+        assert_eq!(app.active_profile, 1);
+        assert_eq!(app.eq.bands.len(), 1);
+        assert_eq!(app.eq.bands[0].frequency, 500.0);
     }
 }

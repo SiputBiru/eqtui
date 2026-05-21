@@ -14,6 +14,7 @@ pub const SAMPLE_RATE: f32 = 48_000.0;
 pub struct Pipeline {
     eq: Equalizer,
     bypass: AtomicBool,
+    preamp: AtomicU32,
     peak_l: AtomicU32,
     peak_r: AtomicU32,
 }
@@ -23,6 +24,7 @@ impl Pipeline {
         Self {
             eq: Equalizer::new(sample_rate),
             bypass: AtomicBool::new(false),
+            preamp: AtomicU32::new(1.0_f32.to_bits()),
             peak_l: AtomicU32::new(0.0_f32.to_bits()),
             peak_r: AtomicU32::new(0.0_f32.to_bits()),
         }
@@ -35,12 +37,20 @@ impl Pipeline {
         left_out: &mut [f32],
         right_out: &mut [f32],
     ) {
+        let preamp = f32::from_bits(self.preamp.load(Ordering::Relaxed));
+        let n = left_in.len().min(left_out.len());
+
         if self.bypass.load(Ordering::Relaxed) {
-            let n = left_in.len().min(left_out.len());
-            left_out[..n].copy_from_slice(&left_in[..n]);
-            right_out[..n].copy_from_slice(&right_in[..n]);
+            for i in 0..n {
+                left_out[i] = left_in[i] * preamp;
+                right_out[i] = right_in[i] * preamp;
+            }
         } else {
             self.eq.process(left_in, right_in, left_out, right_out);
+            for i in 0..n {
+                left_out[i] *= preamp;
+                right_out[i] *= preamp;
+            }
         }
 
         let mut max_l = 0.0_f32;
@@ -68,6 +78,11 @@ impl Pipeline {
             f32::from_bits(self.peak_l.load(Ordering::Relaxed)),
             f32::from_bits(self.peak_r.load(Ordering::Relaxed)),
         )
+    }
+
+    pub fn set_preamp(&self, gain_db: f32) {
+        let linear = 10.0_f32.powf(gain_db / 20.0);
+        self.preamp.store(linear.to_bits(), Ordering::Relaxed);
     }
 
     pub fn set_bands(&self, bands: Vec<EqBand>, sample_rate: f32) -> AppResult<()> {
@@ -145,5 +160,34 @@ mod tests {
         let (pk_l, pk_r) = p.peaks();
         assert!((pk_l - 0.8).abs() < 1e-6);
         assert!((pk_r - 0.9).abs() < 1e-6);
+    }
+
+    #[test]
+    fn preamp_prevents_clipping() {
+        let p = Pipeline::new(SAMPLE_RATE);
+        // User's Filter 8: PK Fc 4573 Hz Gain 16.00 dB Q 0.400
+        let bands = vec![EqBand {
+            frequency: 4573.0,
+            gain: 16.0,
+            q: 0.4,
+            filter_type: FilterType::Peak,
+        }];
+        p.set_bands(bands, SAMPLE_RATE).unwrap();
+
+        // With -16.1dB preamp, total gain should be slightly below 0dB (1.0)
+        p.set_preamp(-16.1);
+
+        let n = 1024;
+        let freq = 4573.0;
+        let input: Vec<f32> = (0..n)
+            .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / SAMPLE_RATE).sin())
+            .collect();
+        let mut lo = vec![0.0_f32; n];
+        let mut ro = vec![0.0_f32; n];
+        p.process(&input, &input, &mut lo, &mut ro);
+
+        let max_val = lo.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
+        println!("Max output value with preamp: {}", max_val);
+        assert!(max_val <= 1.0, "Expected no clipping (<= 1.0) but got {}", max_val);
     }
 }

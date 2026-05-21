@@ -340,6 +340,7 @@ fn dispatch_request(
 
         Request::SetPreamp { gain } => {
             *state.preamp.lock().unwrap() = gain;
+            state.pipeline.set_preamp(gain);
             info!(gain, "Preamp updated");
             Response::ok()
         }
