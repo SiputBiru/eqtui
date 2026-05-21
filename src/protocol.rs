@@ -2,8 +2,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::state::{EqBand, FilterState, NodeInfo, NullSinkState};
 
-// ── Client → Daemon ────────────────────────────────────────────
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "cmd")]
 pub enum Request {
@@ -13,11 +11,8 @@ pub enum Request {
     SetBypass { bypass: bool },
     ConnectDevice { node_id: u32 },
     DisconnectDevice { node_id: u32 },
-    LoadPeq { path: String },
     Shutdown,
 }
-
-// ── Daemon → Client (response to a request) ────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Response {
@@ -27,8 +22,6 @@ pub struct Response {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<DaemonStatus>,
 }
-
-// ── Daemon → All Clients (unsolicited push) ────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event")]
@@ -41,8 +34,6 @@ pub enum PushEvent {
     SourceActive { active: bool },
     Error { message: String },
 }
-
-// ── Full daemon state snapshot ─────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaemonStatus {

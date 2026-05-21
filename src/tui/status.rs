@@ -1,6 +1,6 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Style, Stylize};
+use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::symbols;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{self, LineGauge, Paragraph};
@@ -141,6 +141,7 @@ pub fn render_hints(app: &App, frame: &mut Frame, area: Rect) {
             spans.extend(vec![
                 Span::from(":").bold(),
                 Span::styled(&app.command_input, Style::default().fg(Color::Yellow)),
+                Span::styled("▌", Style::default().fg(Color::Yellow).add_modifier(Modifier::SLOW_BLINK)),
             ]);
         }
         Mode::Visual => {}

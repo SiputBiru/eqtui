@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use tui_input::Input;
 
+use crate::client::DaemonClient;
 use crate::config::Config;
+use crate::profiles::{self, Profile};
 use crate::protocol::PushEvent;
 use crate::state::{EqBand, FilterState, NodeInfo, NullSinkState};
-
-use crate::client::DaemonClient;
 use crate::AppResult;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -51,7 +51,6 @@ pub struct App {
     pub focused_block: FocusedBlock,
     pub mode: Mode,
 
-    // ── Audio-graph state (synced from daemon) ──
     pub nodes: Vec<NodeInfo>,
     pub pw_connected: bool,
     pub filter_node_id: Option<u32>,
@@ -59,30 +58,39 @@ pub struct App {
     pub null_sink: NullSinkState,
     pub connected_devices: Vec<u32>,
 
-    // ── EQ state (synced from daemon, mutated locally) ──
     pub eq: EqState,
+    pub preamp: f32,
 
-    // ── Metering (computed from daemon push events + decay) ──
+    pub profiles: Vec<Profile>,
+    pub active_profile: usize,
+
     pub peak_l: f32,
     pub peak_r: f32,
-    cached_peak_l: f32,  // latest raw peak from daemon
+    cached_peak_l: f32,
     cached_peak_r: f32,
 
-    // ── UI-only state ──
     pub nodes_selected: usize,
     pub command_input: String,
     pub last_key: Option<char>,
 
-    // ── Daemon connection ──
-    //
-    // Wrapped in Option so unit tests can construct App without
-    // a running daemon.  Production code always provides Some.
+    /// Transient status message with remaining tick count.
+    /// Cleared automatically when the counter reaches zero.
+    pub notification: Option<(String, usize)>,
+
+    /// Wrapped in `Option` so unit tests can exist without a daemon.
     client: Option<DaemonClient>,
 }
 
 impl App {
-    /// Production constructor — requires a connected `DaemonClient`.
     pub fn new(config: Arc<Config>, client: DaemonClient) -> Self {
+        let profiles = profiles::load();
+        let active = 0;
+        let (bands, preamp) = if let Some(p) = profiles.get(active) {
+            (p.bands.clone(), p.preamp)
+        } else {
+            (Vec::new(), 0.0)
+        };
+
         Self {
             running: true,
             config,
@@ -93,33 +101,29 @@ impl App {
             nodes_selected: 0,
             pw_connected: false,
             command_input: String::new(),
-            eq: EqState::default(),
+            eq: EqState { bands, ..EqState::default() },
+            preamp,
+            profiles,
+            active_profile: active,
             last_key: None,
             peak_l: -60.0,
             peak_r: -60.0,
-            // Raw linear peak values from daemon (0.0 = silence, 1.0 = full scale).
-            // Converted to dBFS + decay in tick().
             cached_peak_l: 0.0,
             cached_peak_r: 0.0,
             null_sink: NullSinkState::NotLoaded,
             connected_devices: Vec::new(),
             filter_node_id: None,
             filter_state: FilterState::Unconnected,
+            notification: None,
         }
     }
 
-    /// Access the daemon client (panics if called in tests without one).
     fn client(&mut self) -> &mut DaemonClient {
         self.client
             .as_mut()
             .expect("DaemonClient required — not available in unit tests")
     }
 
-    // ── Event synchronization ─────────────────────────────────────────
-
-    /// Drain all push events from the daemon (non-blocking).
-    /// Call once per frame before rendering.  No-op when no
-    /// daemon is connected (unit tests).
     pub fn drain_events(&mut self) -> AppResult<()> {
         loop {
             let event = {
@@ -148,10 +152,7 @@ impl App {
                     self.nodes_selected = self.nodes.len().saturating_sub(1);
                 }
             }
-            PushEvent::StateChange { state: _ } => {
-                // The full state is available via get_status().
-                // For now, just note that something changed.
-            }
+            PushEvent::StateChange { .. } => {}
             PushEvent::FilterReady { node_id } => {
                 self.filter_node_id = Some(node_id);
             }
@@ -170,8 +171,7 @@ impl App {
         }
     }
 
-    /// Pull a full status snapshot from the daemon (for initial sync
-    /// and after major state transitions).
+    /// Pull a full state snapshot from the daemon on initial connect.
     pub fn full_sync(&mut self) -> AppResult<()> {
         let status = self.client().get_status()?;
         self.nodes = status.nodes;
@@ -182,20 +182,25 @@ impl App {
         self.connected_devices = status.connected_devices;
         self.eq.bypass = status.bypass;
         self.eq.bands = status.bands;
+        self.preamp = status.preamp;
         Ok(())
     }
 
-    // ── Peak metering ─────────────────────────────────────────────────
-
     pub fn tick(&mut self) {
-        // Convert raw linear peak (from daemon) to dBFS with decay.
+        if let Some((_, ttl)) = &mut self.notification {
+            *ttl = ttl.saturating_sub(1);
+            if *ttl == 0 {
+                self.notification = None;
+            }
+        }
+
         let mut new_l = 20.0 * (self.cached_peak_l + 1e-7).log10();
         let mut new_r = 20.0 * (self.cached_peak_r + 1e-7).log10();
 
         new_l = new_l.clamp(-60.0, 0.0);
         new_r = new_r.clamp(-60.0, 0.0);
 
-        let decay_speed = 0.8; // ~24 dB/sec at 30 fps
+        let decay_speed = 0.8;
 
         if new_l < self.peak_l {
             self.peak_l -= decay_speed;
@@ -216,19 +221,30 @@ impl App {
         }
     }
 
-    // ── Commands ─────────────────────────────────────────────────────
-
     pub fn quit(&mut self) {
         self.running = false;
     }
 
-    /// Sync the local band configuration to the daemon DSP.
+    pub fn notify(&mut self, msg: impl Into<String>) {
+        self.notification = Some((msg.into(), 90)); // ~3 seconds at 30fps
+    }
+
     pub fn sync_bands(&mut self) -> AppResult<()> {
         if let Some(client) = &mut self.client {
-            client.set_bands(&self.eq.bands)
-        } else {
-            Ok(()) // no-op in tests
+            client.set_bands(&self.eq.bands)?;
+            client.set_preamp(self.preamp)?;
         }
+        if let Some(p) = self.profiles.get_mut(self.active_profile) {
+            p.bands = self.eq.bands.clone();
+            p.preamp = self.preamp;
+        }
+        profiles::save(&self.profiles);
+        self.notify(format!(
+            "Saved {} bands, preamp {:.1} dB",
+            self.eq.bands.len(),
+            self.preamp
+        ));
+        Ok(())
     }
 
     pub fn sync_bypass(&mut self) -> AppResult<()> {
@@ -239,15 +255,49 @@ impl App {
         }
     }
 
+    pub fn load_peq(&mut self, path: &str) -> AppResult<()> {
+        let preset = crate::autoeq::parse_peq(std::path::Path::new(path))?;
+        self.preamp = preset.preamp;
+        self.eq.bands = preset.bands;
+        self.eq.band_selected = 0;
+        let _ = self.sync_bands();
+        self.notify(format!(
+            "Loaded {} bands, preamp {:.1} dB",
+            self.eq.bands.len(),
+            self.preamp
+        ));
+        Ok(())
+    }
+
+    pub fn switch_profile(&mut self, dir: isize) {
+        let count = self.profiles.len() as isize;
+        if count == 0 {
+            return;
+        }
+
+        // Save current bands into the profile we're leaving.
+        if let Some(p) = self.profiles.get_mut(self.active_profile) {
+            p.bands = self.eq.bands.clone();
+            p.preamp = self.preamp;
+        }
+        let idx = (self.active_profile as isize + dir).rem_euclid(count) as usize;
+
+        if let Some(p) = self.profiles.get(idx) {
+            self.active_profile = idx;
+            self.eq.bands = p.bands.clone();
+            self.preamp = p.preamp;
+            self.eq.band_selected = 0;
+        }
+    }
+
     pub fn is_device_connected(&self, id: u32) -> bool {
         self.connected_devices.contains(&id)
     }
 
-    /// Toggle a device connection.  Communicates directly with the
-    /// daemon when available (no-op in unit tests).
+    /// Toggle a device link. No-op when daemon is disconnected (tests).
     pub fn toggle_device_connection(&mut self, id: u32) -> AppResult<()> {
         if self.filter_node_id.is_none() {
-            return Ok(()); // filter not ready — nothing to do
+            return Ok(());
         }
         if self.is_device_connected(id) {
             self.connected_devices.retain(|d| *d != id);
@@ -264,8 +314,6 @@ impl App {
     }
 }
 
-// ── Test helper (available to all test modules in the crate) ────────
-
 #[cfg(test)]
 impl App {
     pub(crate) fn new_test(config: Arc<Config>) -> Self {
@@ -280,22 +328,26 @@ impl App {
             pw_connected: false,
             command_input: String::new(),
             eq: EqState::default(),
+            preamp: 0.0,
+            profiles: vec![Profile {
+                name: "Test".into(),
+                bands: vec![],
+                preamp: 0.0,
+            }],
+            active_profile: 0,
             last_key: None,
             peak_l: -60.0,
             peak_r: -60.0,
-            // Raw linear peak values from daemon (0.0 = silence, 1.0 = full scale).
-            // Converted to dBFS + decay in tick().
             cached_peak_l: 0.0,
             cached_peak_r: 0.0,
             null_sink: NullSinkState::NotLoaded,
             connected_devices: Vec::new(),
             filter_node_id: None,
             filter_state: FilterState::Unconnected,
+            notification: None,
         }
     }
 }
-
-// ── Tests ─────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

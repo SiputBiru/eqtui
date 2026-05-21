@@ -1,16 +1,53 @@
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Rect};
-use ratatui::style::{Color, Style};
-use ratatui::widgets::{Block, BorderType, Borders, Cell, Row, Table, TableState};
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table, TableState};
 
 use crate::app::{App, FocusedBlock, Mode};
 use crate::state::FilterType;
 
 pub fn render(app: &App, frame: &mut Frame, area: Rect) {
+    let is_focused = matches!(app.focused_block, FocusedBlock::Pipeline);
+
+    let chunks = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Fill(1),
+    ])
+    .split(area);
+
+    render_tabs(app, frame, chunks[0], is_focused);
+    render_table(app, frame, chunks[1], is_focused);
+}
+
+fn render_tabs(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
+    let spans: Vec<Span> = app
+        .profiles
+        .iter()
+        .enumerate()
+        .flat_map(|(i, p)| {
+            let name = format!(" {p} ", p = p.name);
+            let style = if i == app.active_profile {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Green)
+                    .add_modifier(Modifier::BOLD)
+            } else if focused {
+                Style::default().fg(Color::Gray)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            vec![Span::styled(name, style)]
+        })
+        .collect();
+
+    let p = Paragraph::new(Line::from(spans));
+    frame.render_widget(p, area);
+}
+
+fn render_table(app: &App, frame: &mut Frame, area: Rect, is_focused: bool) {
     let bands = &app.eq.bands;
     let selected = app.eq.band_selected;
-
-    let is_focused = matches!(app.focused_block, FocusedBlock::Pipeline);
 
     let header = Row::new(["#", "Frequency", "Gain", "Q", "Type"])
         .style(if is_focused {
@@ -87,26 +124,33 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
         Constraint::Length(6),
     ];
 
-    let table = Table::new(rows, widths).header(header).block(
-        Block::default()
-            .title(" Equalizer ")
-            .title_style(if is_focused {
-                Style::default().bold()
-            } else {
-                Style::default()
-            })
-            .borders(Borders::ALL)
-            .border_type(if is_focused {
-                BorderType::Thick
-            } else {
-                BorderType::Plain
-            })
-            .border_style(if is_focused {
-                Style::default().fg(Color::Green)
-            } else {
-                Style::default()
-            }),
-    );
+    let mut block = Block::default()
+        .title(" Equalizer ")
+        .title_style(if is_focused {
+            Style::default().bold()
+        } else {
+            Style::default()
+        })
+        .borders(Borders::ALL)
+        .border_type(if is_focused {
+            BorderType::Thick
+        } else {
+            BorderType::Plain
+        })
+        .border_style(if is_focused {
+            Style::default().fg(Color::Green)
+        } else {
+            Style::default()
+        });
+
+    if let Some((msg, _)) = &app.notification {
+        block = block.title_bottom(Line::from(Span::styled(
+            format!(" {} ", msg),
+            Style::default().fg(Color::Green),
+        )));
+    }
+
+    let table = Table::new(rows, widths).header(header).block(block);
 
     let mut state = TableState::default().with_selected(selected);
     frame.render_stateful_widget(table, area, &mut state);

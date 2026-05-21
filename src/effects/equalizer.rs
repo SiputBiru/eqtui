@@ -191,7 +191,7 @@ fn biquad_coefficients(band: &EqBand, sample_rate: f32) -> BiquadCoeffs {
     use std::f32::consts::PI;
 
     let freq = band.frequency.clamp(10.0, sample_rate * 0.49);
-    let gain_linear = 10.0_f32.powf(band.gain / 20.0);
+    let gain_linear = 10.0_f32.powf(band.gain / 40.0);
     let w0 = 2.0 * PI * freq / sample_rate;
     let cos_w0 = w0.cos();
     let sin_w0 = w0.sin();

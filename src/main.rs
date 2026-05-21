@@ -1,12 +1,14 @@
 use std::io;
 use std::sync::Arc;
 
+use ratatui::backend::CrosstermBackend;
 use tracing_error::ErrorLayer;
 use tracing_subscriber::prelude::*;
 
 use eqtui::{
     AppResult,
     app::App,
+    autoeq::parse_peq,
     client::DaemonClient,
     config::Config,
     daemon,
@@ -14,10 +16,8 @@ use eqtui::{
     handler,
     tui::{self, Tui},
 };
-use ratatui::backend::CrosstermBackend;
 
 fn main() -> AppResult<()> {
-    // ── Logging ────────────────────────────────────────────────────
     let log_dir = dirs::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
         .join("eqtui");
@@ -39,18 +39,17 @@ fn main() -> AppResult<()> {
 
     color_eyre::install()?;
 
-    // ── Subcommand dispatch ────────────────────────────────────────
     let args: Vec<String> = std::env::args().collect();
     let mode = args.get(1).map(|s| s.as_str()).unwrap_or("attach");
 
     match mode {
         "daemon" => daemon::run(),
         "stop" => run_cli_stop(),
+        "load" => run_cli_load(&args),
         "attach" | _ => run_tui_attach(),
     }
 }
 
-/// Send a shutdown request to the running daemon.
 fn run_cli_stop() -> AppResult<()> {
     let mut client = DaemonClient::connect()?;
     client.shutdown()?;
@@ -58,17 +57,33 @@ fn run_cli_stop() -> AppResult<()> {
     Ok(())
 }
 
-/// Connect to the daemon (auto-launch if needed) and start the TUI.
+fn run_cli_load(args: &[String]) -> AppResult<()> {
+    let path = args
+        .get(2)
+        .ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "Usage: eqtui load <peq_file>")
+        })?;
+
+    let preset = parse_peq(std::path::Path::new(path))?;
+    let mut client = DaemonClient::connect()?;
+    client.set_preamp(preset.preamp)?;
+    client.set_bands(&preset.bands)?;
+
+    println!(
+        "Loaded: {} bands, preamp {:.1} dB",
+        preset.bands.len(),
+        preset.preamp
+    );
+    Ok(())
+}
+
 fn run_tui_attach() -> AppResult<()> {
     tracing::info!("Connecting to daemon...");
     let client = DaemonClient::connect()?;
 
     let config = Arc::new(Config::new(None));
-
-    tracing::info!("Creating App and pulling initial state...");
     let mut app = App::new(config, client);
 
-    // Pull the daemon's current state so the TUI starts with real data.
     if let Err(e) = app.full_sync() {
         tracing::warn!(%e, "Initial full_sync failed — starting with defaults");
     }
@@ -82,19 +97,15 @@ fn run_tui_attach() -> AppResult<()> {
     tracing::info!("Entering TUI main loop");
 
     while app.running {
-        // Drain push events from daemon (peaks, node lists, etc.).
         if let Err(e) = app.drain_events() {
             tracing::error!(%e, "Daemon connection lost");
             app.running = false;
             break;
         }
 
-        // Block on next UI event.
         match tui.events.next()? {
             eqtui::event::Event::Tick => app.tick(),
-            eqtui::event::Event::Key(key) => {
-                handler::dispatch(key, &mut app);
-            }
+            eqtui::event::Event::Key(key) => handler::dispatch(key, &mut app),
             eqtui::event::Event::Resize(_, _) => {}
         }
 
@@ -103,6 +114,5 @@ fn run_tui_attach() -> AppResult<()> {
 
     tui.exit()?;
     tracing::info!("TUI exited — daemon keeps running");
-
     Ok(())
 }

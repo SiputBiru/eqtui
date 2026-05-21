@@ -1,5 +1,3 @@
-//! Unix-socket client for communicating with the eqtui daemon.
-
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
@@ -17,23 +15,18 @@ pub struct DaemonClient {
 }
 
 impl DaemonClient {
-    /// Connect to the daemon.  If no daemon is running, spawn one
-    /// automatically (`fork` + `exec $0 daemon`) and retry for up
-    /// to 3 seconds.
+    /// Connect to the daemon, auto-launching if none is running.
     pub fn connect() -> crate::AppResult<Self> {
         let path = socket_path();
 
-        // First attempt — daemon might already be running.
         if let Ok(client) = Self::try_connect(&path) {
             info!("Connected to existing daemon");
             return Ok(client);
         }
 
-        // Auto-launch the daemon.
         info!("No daemon found — auto-launching");
         spawn_daemon();
 
-        // Retry every 100ms for up to 3 seconds.
         for _ in 0..30 {
             std::thread::sleep(Duration::from_millis(100));
             if let Ok(client) = Self::try_connect(&path) {
@@ -49,21 +42,19 @@ impl DaemonClient {
         .into())
     }
 
-    /// Raw connect attempt — no auto-launch.
     fn try_connect(path: &PathBuf) -> std::io::Result<Self> {
         let stream = UnixStream::connect(path)?;
-        stream.set_nonblocking(false)?; // blocking reads for request/response
         let reader = BufReader::new(
-            stream
-                .try_clone()
-                .expect("BUG: UnixStream::try_clone failed"),
+            stream.try_clone().map_err(|e| {
+                std::io::Error::new(
+                    e.kind(),
+                    format!("Failed to clone daemon socket for reading: {e}"),
+                )
+            })?,
         );
         Ok(Self { stream, reader })
     }
 
-    // ── Request / response ──────────────────────────────────────────
-
-    /// Send a request and wait for the response.
     pub fn request(&mut self, req: Request) -> crate::AppResult<Response> {
         let json = serde_json::to_string(&req)?;
         self.stream.write_all(json.as_bytes())?;
@@ -72,32 +63,24 @@ impl DaemonClient {
 
         let mut line = String::new();
         self.reader.read_line(&mut line)?;
-        let resp: Response = serde_json::from_str(line.trim())?;
-        Ok(resp)
+        Ok(serde_json::from_str(line.trim())?)
     }
 
-    /// Non-blocking read for a pushed event (peaks, node lists, etc.).
-    /// Returns `None` if no data is available.
+    /// Returns `None` when no push events are available.
     pub fn try_read_event(&mut self) -> std::io::Result<Option<PushEvent>> {
-        // Switch to non-blocking temporarily.
         self.reader.get_mut().set_nonblocking(true)?;
         let mut line = String::new();
         let result = match self.reader.read_line(&mut line) {
-            Ok(0) => Ok(None),           // EOF — daemon disconnected
-            Ok(_) => {
-                let event: PushEvent = serde_json::from_str(line.trim())
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-                Ok(Some(event))
-            }
+            Ok(0) => Ok(None),
+            Ok(_) => serde_json::from_str(line.trim())
+                .map(Some)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
             Err(e) => Err(e),
         };
-        // Restore blocking mode for request/response.
         self.reader.get_mut().set_nonblocking(false)?;
         result
     }
-
-    // ── Convenience methods ─────────────────────────────────────────
 
     pub fn get_status(&mut self) -> crate::AppResult<DaemonStatus> {
         let resp = self.request(Request::GetStatus)?;
@@ -118,6 +101,11 @@ impl DaemonClient {
         check_ok(resp)
     }
 
+    pub fn set_preamp(&mut self, gain: f32) -> crate::AppResult<()> {
+        let resp = self.request(Request::SetPreamp { gain })?;
+        check_ok(resp)
+    }
+
     pub fn set_bypass(&mut self, bypass: bool) -> crate::AppResult<()> {
         let resp = self.request(Request::SetBypass { bypass })?;
         check_ok(resp)
@@ -134,12 +122,10 @@ impl DaemonClient {
     }
 
     pub fn shutdown(&mut self) -> crate::AppResult<()> {
-        let _resp = self.request(Request::Shutdown)?;
+        let _ = self.request(Request::Shutdown)?;
         Ok(())
     }
 }
-
-// ── Helpers ────────────────────────────────────────────────────────────
 
 fn check_ok(resp: Response) -> crate::AppResult<()> {
     if resp.ok {
@@ -165,7 +151,6 @@ fn runtime_dir() -> PathBuf {
     }
 }
 
-/// Fork + exec the same binary with `daemon` as the first argument.
 fn spawn_daemon() {
     let exe = match std::env::current_exe() {
         Ok(p) => p,
