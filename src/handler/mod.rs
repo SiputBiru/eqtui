@@ -6,22 +6,15 @@ pub mod visual;
 use crossterm::event::KeyEvent;
 
 use crate::app::{App, Mode};
-use crate::state::PwCommand;
 
-pub fn dispatch(key: KeyEvent, app: &mut App) -> Option<PwCommand> {
+/// Route a key event through the current mode's handler.
+/// Side effects (band changes, device connections, etc.) are
+/// sent to the daemon directly via `App`'s client.
+pub fn dispatch(key: KeyEvent, app: &mut App) {
     match app.mode {
         Mode::Normal => normal::handle(key, app),
-        Mode::Insert => {
-            insert::handle(key, app);
-            None
-        }
-        Mode::Visual => {
-            visual::handle(key, app);
-            None
-        }
-        Mode::Command => {
-            command::handle(key, app);
-            None
-        }
+        Mode::Insert => insert::handle(key, app),
+        Mode::Visual => visual::handle(key, app),
+        Mode::Command => command::handle(key, app),
     }
 }

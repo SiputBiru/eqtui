@@ -1,23 +1,17 @@
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::{App, FocusedBlock, Mode};
-use crate::state::{EqBand, FilterType, PwCommand};
+use crate::state::{EqBand, FilterType};
 
-pub fn handle(key: KeyEvent, app: &mut App) -> Option<PwCommand> {
+pub fn handle(key: KeyEvent, app: &mut App) {
     match app.focused_block {
         FocusedBlock::Devices => handle_devices(key, app),
-        FocusedBlock::Pipeline => {
-            handle_pipeline(key, app);
-            None
-        }
-        FocusedBlock::CommandBar => {
-            handle_command_bar(key, app);
-            None
-        }
+        FocusedBlock::Pipeline => handle_pipeline(key, app),
+        FocusedBlock::CommandBar => handle_command_bar(key, app),
     }
 }
 
-fn handle_devices(key: KeyEvent, app: &mut App) -> Option<PwCommand> {
+fn handle_devices(key: KeyEvent, app: &mut App) {
     match key.code {
         KeyCode::Char('q') => app.quit(),
         KeyCode::Tab | KeyCode::Char('l') => {
@@ -36,13 +30,14 @@ fn handle_devices(key: KeyEvent, app: &mut App) -> Option<PwCommand> {
             let target_node = &app.nodes[app.nodes_selected];
             // Skip if it's the eqtui null sink itself (can't route eqtui → eqtui)
             if target_node.description.contains("eqtui") {
-                return None;
+                return;
             }
-            return app.toggle_device_connection(target_node.id);
+            if let Err(e) = app.toggle_device_connection(target_node.id) {
+                tracing::error!(%e, "Failed to toggle device connection");
+            }
         }
         _ => {}
     }
-    None
 }
 
 fn handle_pipeline(key: KeyEvent, app: &mut App) {
@@ -124,11 +119,7 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
         }
         KeyCode::Char('b') => {
             app.eq.bypass = !app.eq.bypass;
-            if app.eq.bypass {
-                app.pipeline.set_bypass(true);
-            } else {
-                app.pipeline.set_bypass(false);
-            }
+            let _ = app.sync_bypass();
         }
         KeyCode::Char('g') if app.last_key == Some('g') && !app.eq.bands.is_empty() => {
             app.eq.band_selected = 0;
@@ -213,15 +204,13 @@ fn handle_command_bar(_key: KeyEvent, app: &mut App) {
 mod tests {
     use super::*;
     use crate::config::Config;
-    use crate::pipeline::Pipeline;
     use crossterm::event::{KeyEvent, KeyModifiers};
     use std::sync::Arc;
 
     #[test]
     fn test_handle_pipeline_horizontal_navigation() {
         let config = Arc::new(Config::default());
-        let pipeline = Arc::new(Pipeline::new(48000.0));
-        let mut app = App::new(config, pipeline);
+        let mut app = App::new_test(config);
         app.focused_block = FocusedBlock::Pipeline;
 
         assert_eq!(app.eq.column_selected, 1);
@@ -272,8 +261,7 @@ mod tests {
     #[test]
     fn test_handle_pipeline_bumping() {
         let config = Arc::new(Config::default());
-        let pipeline = Arc::new(Pipeline::new(48000.0));
-        let mut app = App::new(config, pipeline);
+        let mut app = App::new_test(config);
         app.focused_block = FocusedBlock::Pipeline;
 
         app.eq.bands.push(EqBand {
@@ -340,8 +328,7 @@ mod tests {
     #[test]
     fn test_handle_pipeline_insert_mode_initialization() {
         let config = Arc::new(Config::default());
-        let pipeline = Arc::new(Pipeline::new(48000.0));
-        let mut app = App::new(config, pipeline);
+        let mut app = App::new_test(config);
         app.focused_block = FocusedBlock::Pipeline;
 
         app.eq.bands.push(EqBand {
@@ -388,8 +375,7 @@ mod tests {
     #[test]
     fn test_handle_devices_connect_toggle() {
         let config = Arc::new(Config::default());
-        let pipeline = Arc::new(Pipeline::new(48000.0));
-        let mut app = App::new(config, pipeline);
+        let mut app = App::new_test(config);
         app.focused_block = FocusedBlock::Devices;
         app.filter_node_id = Some(42); // simulate filter ready
         app.nodes.push(crate::state::NodeInfo {
@@ -400,19 +386,17 @@ mod tests {
         });
         app.nodes_selected = 0;
 
-        let result = handle_devices(
+        handle_devices(
             KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
             &mut app,
         );
-        assert!(result.is_some());
         assert!(app.is_device_connected(123));
         assert_eq!(app.connected_devices, vec![123]);
 
-        let result = handle_devices(
+        handle_devices(
             KeyEvent::new(KeyCode::Char('C'), KeyModifiers::NONE),
             &mut app,
         );
-        assert!(result.is_some());
         assert!(!app.is_device_connected(123));
         assert!(app.connected_devices.is_empty());
     }
@@ -420,8 +404,7 @@ mod tests {
     #[test]
     fn test_handle_devices_connect_skips_eqtui() {
         let config = Arc::new(Config::default());
-        let pipeline = Arc::new(Pipeline::new(48000.0));
-        let mut app = App::new(config, pipeline);
+        let mut app = App::new_test(config);
         app.focused_block = FocusedBlock::Devices;
         app.filter_node_id = Some(42);
         app.nodes.push(crate::state::NodeInfo {
@@ -432,19 +415,18 @@ mod tests {
         });
         app.nodes_selected = 0;
 
-        let result = handle_devices(
+        handle_devices(
             KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
             &mut app,
         );
-        assert!(result.is_none());
+        // Should skip because it's the eqtui null sink
         assert!(app.connected_devices.is_empty());
     }
 
     #[test]
     fn test_handle_devices_connect_no_filter_ready() {
         let config = Arc::new(Config::default());
-        let pipeline = Arc::new(Pipeline::new(48000.0));
-        let mut app = App::new(config, pipeline);
+        let mut app = App::new_test(config);
         app.focused_block = FocusedBlock::Devices;
         // filter_node_id is None — not ready yet
         app.nodes.push(crate::state::NodeInfo {
@@ -455,11 +437,11 @@ mod tests {
         });
         app.nodes_selected = 0;
 
-        let result = handle_devices(
+        handle_devices(
             KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
             &mut app,
         );
-        // Should return None because filter isn't ready
-        assert!(result.is_none());
+        // Should do nothing because filter isn't ready
+        assert!(app.connected_devices.is_empty());
     }
 }

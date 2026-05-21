@@ -27,7 +27,7 @@ impl DeviceClass {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeInfo {
     pub id: u32,
     pub name: String,
@@ -51,7 +51,7 @@ impl fmt::Display for NodeInfo {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum NullSinkState {
     NotLoaded,
     Loaded {
@@ -86,7 +86,7 @@ impl NullSinkState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum FilterState {
     Unconnected,
     Connecting,

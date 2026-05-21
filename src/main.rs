@@ -1,26 +1,23 @@
 use std::io;
 use std::sync::Arc;
-use std::sync::mpsc;
-use std::thread;
 
-use pipewire::channel;
 use tracing_error::ErrorLayer;
 use tracing_subscriber::prelude::*;
 
 use eqtui::{
     AppResult,
     app::App,
+    client::DaemonClient,
     config::Config,
+    daemon,
     event::EventHandler,
     handler,
-    pipeline::Pipeline,
-    pw,
-    state::{PwCommand, PwEvent},
     tui::{self, Tui},
 };
 use ratatui::backend::CrosstermBackend;
 
 fn main() -> AppResult<()> {
+    // ── Logging ────────────────────────────────────────────────────
     let log_dir = dirs::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
         .join("eqtui");
@@ -42,68 +39,70 @@ fn main() -> AppResult<()> {
 
     color_eyre::install()?;
 
-    tracing::info!("Starting eqtui...");
+    // ── Subcommand dispatch ────────────────────────────────────────
+    let args: Vec<String> = std::env::args().collect();
+    let mode = args.get(1).map(|s| s.as_str()).unwrap_or("attach");
+
+    match mode {
+        "daemon" => daemon::run(),
+        "stop" => run_cli_stop(),
+        "attach" | _ => run_tui_attach(),
+    }
+}
+
+/// Send a shutdown request to the running daemon.
+fn run_cli_stop() -> AppResult<()> {
+    let mut client = DaemonClient::connect()?;
+    client.shutdown()?;
+    println!("Daemon stopped.");
+    Ok(())
+}
+
+/// Connect to the daemon (auto-launch if needed) and start the TUI.
+fn run_tui_attach() -> AppResult<()> {
+    tracing::info!("Connecting to daemon...");
+    let client = DaemonClient::connect()?;
 
     let config = Arc::new(Config::new(None));
-    let pipeline = Arc::new(Pipeline::new(48000.0));
 
-    let (to_tui, from_pw) = mpsc::channel::<PwEvent>();
-    let (to_pw, from_tui) = channel::channel::<PwCommand>();
+    tracing::info!("Creating App and pulling initial state...");
+    let mut app = App::new(config, client);
 
-    tracing::info!("Spawning PW thread...");
-    let pipeline_pw = pipeline.clone();
-    let pw_handle = thread::spawn(move || {
-        pw::run(to_tui, from_tui, pipeline_pw);
-    });
+    // Pull the daemon's current state so the TUI starts with real data.
+    if let Err(e) = app.full_sync() {
+        tracing::warn!(%e, "Initial full_sync failed — starting with defaults");
+    }
 
-    tracing::info!("Creating Backend...");
     let backend = CrosstermBackend::new(io::stdout());
-
-    tracing::info!("Creating Terminal...");
     let terminal = ratatui::Terminal::new(backend)?;
-
-    tracing::info!("Creating EventHandler...");
     let events = EventHandler::new();
-
-    tracing::info!("Creating Tui struct...");
     let mut tui = Tui::new(terminal, events);
-
-    tracing::info!("Calling tui.init()...");
     tui.init()?;
-    tracing::info!("TUI initialized.");
 
-    let mut app = App::new(config, pipeline);
-    tracing::info!("App created. Entering main loop...");
+    tracing::info!("Entering TUI main loop");
 
     while app.running {
-        while let Ok(event) = from_pw.try_recv() {
-            app.handle_pw_event(event);
+        // Drain push events from daemon (peaks, node lists, etc.).
+        if let Err(e) = app.drain_events() {
+            tracing::error!(%e, "Daemon connection lost");
+            app.running = false;
+            break;
         }
+
+        // Block on next UI event.
         match tui.events.next()? {
             eqtui::event::Event::Tick => app.tick(),
             eqtui::event::Event::Key(key) => {
-                if let Some(cmd) = handler::dispatch(key, &mut app)
-                    && to_pw.send(cmd).is_err()
-                {
-                    tracing::error!("PipeWire thread disconnected; shutting down");
-                    app.running = false;
-                }
+                handler::dispatch(key, &mut app);
             }
             eqtui::event::Event::Resize(_, _) => {}
         }
+
         tui.draw(|frame| tui::render(&app, frame))?;
     }
 
     tui.exit()?;
-
-    if to_pw.send(PwCommand::Terminate).is_err() {
-        tracing::warn!("Pipewire thread already terminated before shutdown signal");
-    }
-
-    if let Err(panic) = pw_handle.join() {
-        tracing::error!("PipeWire thread panicked");
-        std::panic::resume_unwind(panic);
-    }
+    tracing::info!("TUI exited — daemon keeps running");
 
     Ok(())
 }

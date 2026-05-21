@@ -9,14 +9,12 @@ use std::sync::Arc;
 
 use pipewire::spa;
 
-use crate::pipeline::Pipeline;
+use crate::pipeline::{Pipeline, SAMPLE_RATE};
 use crate::state::{FilterState, PwEvent};
 
 use super::links::create_monitor_links;
 use super::props::Props;
 
-// These are only used inside the filter creation path (ports, SPA pod).
-const DEFAULT_SAMPLE_RATE: u32 = 48000;
 const DEFAULT_CHANNELS: u32 = 2;
 
 // Shared by process_buffers and process_cb — kept pub(crate) so other
@@ -319,7 +317,7 @@ pub(crate) fn create_eq_filter(
 
     let mut audio_info = spa::param::audio::AudioInfoRaw::new();
     audio_info.set_format(spa::param::audio::AudioFormat::F32LE);
-    audio_info.set_rate(DEFAULT_SAMPLE_RATE);
+    audio_info.set_rate(SAMPLE_RATE as u32);
     audio_info.set_channels(DEFAULT_CHANNELS);
     let mut position = [0u32; spa::param::audio::MAX_CHANNELS];
     position[0] = libspa_sys::SPA_AUDIO_CHANNEL_FL;
@@ -397,7 +395,7 @@ mod tests {
 
     #[test]
     fn test_process_buffers_null_checks() {
-        let pipeline = Pipeline::new(48000.0);
+        let pipeline = Pipeline::new(SAMPLE_RATE);
         process_buffers(
             &pipeline,
             ptr::null_mut(),
@@ -410,7 +408,7 @@ mod tests {
 
     #[test]
     fn test_process_buffers_alignment_checks() {
-        let pipeline = Pipeline::new(48000.0);
+        let pipeline = Pipeline::new(SAMPLE_RATE);
         // These are synthetic pointers only used for alignment checking, so they
         // don't need real provenance (using Strict Provenance API).
         let misaligned = ptr::without_provenance_mut::<f32>(0x0123_4567);

@@ -64,7 +64,6 @@ mod tests {
     use super::*;
     use crate::app::FocusedBlock;
     use crate::config::Config;
-    use crate::pipeline::Pipeline;
     use crate::state::EqBand;
     use crossterm::event::{KeyEvent, KeyModifiers};
     use std::sync::Arc;
@@ -72,8 +71,7 @@ mod tests {
 
     fn setup_app() -> App {
         let config = Arc::new(Config::default());
-        let pipeline = Arc::new(Pipeline::new(48000.0));
-        let mut app = App::new(config, pipeline);
+        let mut app = App::new_test(config);
         app.focused_block = FocusedBlock::Pipeline;
         app.mode = Mode::Insert;
         app.eq.bands.push(EqBand {

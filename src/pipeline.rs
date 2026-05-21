@@ -7,6 +7,10 @@ use crate::effects::EffectPlugin;
 use crate::effects::equalizer::Equalizer;
 use crate::state::EqBand;
 
+/// Default sample rate for the DSP pipeline (48 kHz).
+/// PipeWire negotiates this format via SPA; all DSP is computed at this rate.
+pub const SAMPLE_RATE: f32 = 48_000.0;
+
 pub struct Pipeline {
     eq: Equalizer,
     bypass: AtomicBool,
@@ -88,7 +92,7 @@ mod tests {
 
     #[test]
     fn bypass_passthrough() {
-        let p = Pipeline::new(48000.0);
+        let p = Pipeline::new(SAMPLE_RATE);
         p.set_bypass(true);
         assert!(p.is_bypassed());
 
@@ -101,14 +105,14 @@ mod tests {
 
     #[test]
     fn process_with_eq_produces_finite_output() {
-        let p = Pipeline::new(48000.0);
+        let p = Pipeline::new(SAMPLE_RATE);
         let bands = vec![EqBand {
             frequency: 500.0,
             gain: 3.0,
             q: 1.0,
             filter_type: FilterType::Peak,
         }];
-        p.set_bands(bands, 48000.0).unwrap();
+        p.set_bands(bands, SAMPLE_RATE).unwrap();
 
         let input = vec![0.3_f32; 256];
         let mut lo = vec![0.0_f32; 256];
@@ -119,7 +123,7 @@ mod tests {
 
     #[test]
     fn set_bypass_roundtrip() {
-        let p = Pipeline::new(48000.0);
+        let p = Pipeline::new(SAMPLE_RATE);
         assert!(!p.is_bypassed());
         p.set_bypass(true);
         assert!(p.is_bypassed());
@@ -129,7 +133,7 @@ mod tests {
 
     #[test]
     fn peak_measurement() {
-        let p = Pipeline::new(48000.0);
+        let p = Pipeline::new(SAMPLE_RATE);
         let left_in = vec![0.5_f32, -0.8_f32, 0.3_f32];
         let right_in = vec![0.1_f32, 0.2_f32, -0.9_f32];
         let mut left_out = vec![0.0_f32; 3];

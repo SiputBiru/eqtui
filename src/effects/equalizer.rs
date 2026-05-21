@@ -250,6 +250,7 @@ fn biquad_coefficients(band: &EqBand, sample_rate: f32) -> BiquadCoeffs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pipeline::SAMPLE_RATE;
 
     fn rms(samples: &[f32]) -> f32 {
         let sum_sq: f32 = samples.iter().map(|s| s * s).sum();
@@ -258,7 +259,7 @@ mod tests {
 
     #[test]
     fn passthrough_bypassed() {
-        let eq = Equalizer::new(48000.0);
+        let eq = Equalizer::new(SAMPLE_RATE);
         eq.set_bypass(true);
         let input = vec![0.5_f32; 128];
         let mut lo = vec![0.0_f32; 128];
@@ -270,7 +271,7 @@ mod tests {
 
     #[test]
     fn passthrough_no_bands() {
-        let eq = Equalizer::new(48000.0);
+        let eq = Equalizer::new(SAMPLE_RATE);
         let input = vec![0.5_f32; 128];
         let mut lo = vec![0.0_f32; 128];
         let mut ro = vec![0.0_f32; 128];
@@ -280,7 +281,7 @@ mod tests {
 
     #[test]
     fn unity_gain_peak() {
-        let eq = Equalizer::new(48000.0);
+        let eq = Equalizer::new(SAMPLE_RATE);
         eq.set_bands(
             &[EqBand {
                 frequency: 1000.0,
@@ -288,7 +289,7 @@ mod tests {
                 q: 1.0,
                 filter_type: FilterType::Peak,
             }],
-            48000.0,
+            SAMPLE_RATE,
         )
         .unwrap();
         let n = 1024;
@@ -301,7 +302,7 @@ mod tests {
 
     #[test]
     fn positive_gain_boosts() {
-        let eq = Equalizer::new(48000.0);
+        let eq = Equalizer::new(SAMPLE_RATE);
         eq.set_bands(
             &[EqBand {
                 frequency: 1000.0,
@@ -309,12 +310,12 @@ mod tests {
                 q: 1.0,
                 filter_type: FilterType::Peak,
             }],
-            48000.0,
+            SAMPLE_RATE,
         )
         .unwrap();
         let n = 4096;
         let freq = 1000.0;
-        let sr = 48000.0;
+        let sr = SAMPLE_RATE;
         let input: Vec<f32> = (0..n)
             .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / sr).sin())
             .collect();
@@ -330,7 +331,7 @@ mod tests {
 
     #[test]
     fn negative_gain_cuts() {
-        let eq = Equalizer::new(48000.0);
+        let eq = Equalizer::new(SAMPLE_RATE);
         eq.set_bands(
             &[EqBand {
                 frequency: 1000.0,
@@ -338,12 +339,12 @@ mod tests {
                 q: 1.0,
                 filter_type: FilterType::Peak,
             }],
-            48000.0,
+            SAMPLE_RATE,
         )
         .unwrap();
         let n = 4096;
         let freq = 1000.0;
-        let sr = 48000.0;
+        let sr = SAMPLE_RATE;
         let input: Vec<f32> = (0..n)
             .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / sr).sin())
             .collect();
@@ -359,7 +360,7 @@ mod tests {
 
     #[test]
     fn multiple_bands_chain() {
-        let eq = Equalizer::new(48000.0);
+        let eq = Equalizer::new(SAMPLE_RATE);
         let bands = vec![
             EqBand {
                 frequency: 100.0,
@@ -380,7 +381,7 @@ mod tests {
                 filter_type: FilterType::HighShelf,
             },
         ];
-        eq.set_bands(&bands, 48000.0).unwrap();
+        eq.set_bands(&bands, SAMPLE_RATE).unwrap();
         let n = 512;
         let input = vec![0.3_f32; n];
         let mut lo = vec![0.0_f32; n];
@@ -392,7 +393,7 @@ mod tests {
 
     #[test]
     fn low_shelf_boosts_bass() {
-        let eq = Equalizer::new(48000.0);
+        let eq = Equalizer::new(SAMPLE_RATE);
         eq.set_bands(
             &[EqBand {
                 frequency: 200.0,
@@ -400,12 +401,12 @@ mod tests {
                 q: 0.71,
                 filter_type: FilterType::LowShelf,
             }],
-            48000.0,
+            SAMPLE_RATE,
         )
         .unwrap();
         let n = 4096;
         let freq = 50.0;
-        let sr = 48000.0;
+        let sr = SAMPLE_RATE;
         let input: Vec<f32> = (0..n)
             .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / sr).sin())
             .collect();
