@@ -101,7 +101,6 @@ unsafe extern "C" fn state_changed_cb(
         let fd = &*(data as *const FilterData);
         let state_str = state_name_for(new);
         let filter_state = match state_str {
-            "UNCONNECTED" => FilterState::Unconnected,
             "CONNECTING" => FilterState::Connecting,
             "PAUSED" => FilterState::Paused,
             "STREAMING" => FilterState::Streaming,
@@ -200,12 +199,12 @@ impl FilterHandle {
     }
 }
 
-/// Register a single DSP port on a pw_filter node.
+/// Register a single DSP port on a `pw_filter` node.
 ///
 /// # Safety
 /// `filter` must be a valid non-null `pw_filter` pointer obtained from
 /// `pw_filter_new`. The returned pointer must outlive the filter and will
-/// be freed by PipeWire when `pw_filter_destroy` is called.
+/// be freed by `PipeWire` when `pw_filter_destroy` is called.
 unsafe fn add_dsp_port(
     filter: *mut pipewire_sys::pw_filter,
     name: &str,
@@ -317,6 +316,7 @@ pub(crate) fn create_eq_filter(
 
     let mut audio_info = spa::param::audio::AudioInfoRaw::new();
     audio_info.set_format(spa::param::audio::AudioFormat::F32LE);
+    #[allow(clippy::cast_sign_loss)]
     audio_info.set_rate(SAMPLE_RATE as u32);
     audio_info.set_channels(DEFAULT_CHANNELS);
     let mut position = [0u32; spa::param::audio::MAX_CHANNELS];

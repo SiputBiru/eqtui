@@ -1,4 +1,4 @@
-//! Daemon process — owns the PipeWire audio pipeline and serves
+//! Daemon process — owns the `PipeWire` audio pipeline and serves
 //! TUI/CLI clients over a Unix-domain socket.
 //!
 //! The daemon keeps `pw::run` untouched; a bridge thread translates
@@ -82,7 +82,7 @@ impl DaemonState {
     pub fn handle_pw_event(&self, event: PwEvent) {
         match &event {
             PwEvent::NodeList(nodes) => {
-                *self.nodes.lock().unwrap() = nodes.clone();
+                (*self.nodes.lock().unwrap()).clone_from(nodes);
                 self.push_event(PushEvent::NodeList {
                     nodes: nodes.clone(),
                 });
@@ -293,10 +293,7 @@ fn handle_client(
 
     let reader = BufReader::new(read_stream);
     for line in reader.lines() {
-        let line = match line {
-            Ok(l) => l,
-            Err(_) => break,
-        };
+        let Ok(line) = line else { break };
 
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -332,7 +329,7 @@ fn dispatch_request(
 
         Request::SetBands { bands } => {
             let count = bands.len();
-            *state.eq_bands.lock().unwrap() = bands.clone();
+            (*state.eq_bands.lock().unwrap()).clone_from(&bands);
             let _ = state.pipeline.set_bands(bands, SAMPLE_RATE);
             info!(count, "Bands updated");
             Response::ok()
@@ -353,9 +350,8 @@ fn dispatch_request(
         }
 
         Request::ConnectDevice { node_id } => {
-            let filter_id = match *state.filter_node_id.lock().unwrap() {
-                Some(id) => id,
-                None => return Response::error("Filter not ready yet"),
+            let Some(filter_id) = *state.filter_node_id.lock().unwrap() else {
+                return Response::error("Filter not ready yet");
             };
             state.connected_devices.lock().unwrap().push(node_id);
             let _ = cmd_tx.send(PwCommand::ConnectDevice {
@@ -367,9 +363,8 @@ fn dispatch_request(
         }
 
         Request::DisconnectDevice { node_id } => {
-            let filter_id = match *state.filter_node_id.lock().unwrap() {
-                Some(id) => id,
-                None => return Response::error("Filter not ready yet"),
+            let Some(filter_id) = *state.filter_node_id.lock().unwrap() else {
+                return Response::error("Filter not ready yet");
             };
             state
                 .connected_devices

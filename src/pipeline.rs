@@ -8,7 +8,7 @@ use crate::effects::equalizer::Equalizer;
 use crate::state::EqBand;
 
 /// Default sample rate for the DSP pipeline (48 kHz).
-/// PipeWire negotiates this format via SPA; all DSP is computed at this rate.
+/// `PipeWire` negotiates this format via SPA; all DSP is computed at this rate.
 pub const SAMPLE_RATE: f32 = 48_000.0;
 
 pub struct Pipeline {

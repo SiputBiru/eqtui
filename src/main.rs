@@ -40,13 +40,13 @@ fn main() -> AppResult<()> {
     color_eyre::install()?;
 
     let args: Vec<String> = std::env::args().collect();
-    let mode = args.get(1).map(|s| s.as_str()).unwrap_or("attach");
+    let mode = args.get(1).map_or("attach", std::string::String::as_str);
 
     match mode {
         "daemon" => daemon::run(),
         "stop" => run_cli_stop(),
         "load" => run_cli_load(&args),
-        "attach" | _ => run_tui_attach(),
+        _ => run_tui_attach(),
     }
 }
 

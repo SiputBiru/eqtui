@@ -36,33 +36,27 @@ impl Default for ProfilesFile {
 
 pub fn load() -> Vec<Profile> {
     let path = profiles_path();
-    let contents = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(_) => {
-            let defaults = ProfilesFile::default();
-            let _ = save_raw(&defaults, &path);
-            return defaults.profiles;
-        }
+    let Ok(contents) = std::fs::read_to_string(&path) else {
+        let defaults = ProfilesFile::default();
+        let _ = save_raw(&defaults, &path);
+        return defaults.profiles;
     };
 
-    match toml::from_str::<ProfilesFile>(&contents) {
-        Ok(mut pf) => {
-            // Ensure we always have exactly PROFILE_COUNT profiles.
-            while pf.profiles.len() < PROFILE_COUNT {
-                pf.profiles.push(Profile {
-                    name: format!("Profile {}", pf.profiles.len() + 1),
-                    bands: Vec::new(),
-                    preamp: 0.0,
-                });
-            }
-            pf.profiles.truncate(PROFILE_COUNT);
-            pf.profiles
+    if let Ok(mut pf) = toml::from_str::<ProfilesFile>(&contents) {
+        // Ensure we always have exactly PROFILE_COUNT profiles.
+        while pf.profiles.len() < PROFILE_COUNT {
+            pf.profiles.push(Profile {
+                name: format!("Profile {}", pf.profiles.len() + 1),
+                bands: Vec::new(),
+                preamp: 0.0,
+            });
         }
-        Err(_) => {
-            let defaults = ProfilesFile::default();
-            let _ = save_raw(&defaults, &path);
-            defaults.profiles
-        }
+        pf.profiles.truncate(PROFILE_COUNT);
+        pf.profiles
+    } else {
+        let defaults = ProfilesFile::default();
+        let _ = save_raw(&defaults, &path);
+        defaults.profiles
     }
 }
 

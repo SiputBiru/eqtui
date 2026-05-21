@@ -54,10 +54,7 @@ impl fmt::Display for NodeInfo {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum NullSinkState {
     NotLoaded,
-    Loaded {
-        module_id: u32,
-        has_source: bool,
-    },
+    Loaded { module_id: u32, has_source: bool },
 }
 
 impl NullSinkState {

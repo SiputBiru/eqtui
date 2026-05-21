@@ -86,8 +86,7 @@ impl DaemonClient {
         let resp = self.request(Request::GetStatus)?;
         resp.status
             .ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                std::io::Error::other(
                     resp.error.unwrap_or_else(|| "No status in response".into()),
                 )
                 .into()
@@ -131,8 +130,7 @@ fn check_ok(resp: Response) -> crate::AppResult<()> {
     if resp.ok {
         Ok(())
     } else {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
+        Err(std::io::Error::other(
             resp.error.unwrap_or_else(|| "Unknown error".into()),
         )
         .into())
@@ -152,12 +150,9 @@ fn runtime_dir() -> PathBuf {
 }
 
 fn spawn_daemon() {
-    let exe = match std::env::current_exe() {
-        Ok(p) => p,
-        Err(_) => {
-            warn!("Cannot determine own binary path — daemon auto-launch disabled");
-            return;
-        }
+    let Ok(exe) = std::env::current_exe() else {
+        warn!("Cannot determine own binary path — daemon auto-launch disabled");
+        return;
     };
 
     match Command::new(exe)
