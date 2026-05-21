@@ -356,16 +356,7 @@ pub(crate) fn create_eq_filter(
         )
     };
 
-    if ret != 0 {
-        let _ = tx.send(PwEvent::Error(format!("filter_connect failed: {ret}")));
-        return None;
-    }
-
-    unsafe {
-        pipewire_sys::pw_filter_set_active(filter, true);
-    }
-
-    Some(FilterHandle {
+    let handle = FilterHandle {
         filter,
         port_in_l: in_left,
         port_in_r: in_right,
@@ -374,7 +365,23 @@ pub(crate) fn create_eq_filter(
         filter_data_ptr,
         listener_ptr,
         events_ptr,
-    })
+    };
+
+    if ret != 0 {
+        let _ = tx.send(PwEvent::Error(format!("filter_connect failed: {ret}")));
+        // Safety: the filter was created, listeners attached, but connection failed.
+        // It's safe to destroy the filter via the handle to free all resources.
+        unsafe {
+            handle.destroy();
+        }
+        return None;
+    }
+
+    unsafe {
+        pipewire_sys::pw_filter_set_active(filter, true);
+    }
+
+    Some(handle)
 }
 
 #[cfg(test)]

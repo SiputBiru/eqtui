@@ -171,6 +171,12 @@ impl DaemonState {
     }
 
     pub fn push_event(&self, event: PushEvent) {
+        let mut clients = self.clients.lock().unwrap();
+        // Avoid CPU waste when daemon is running in background without connected TUI.
+        if clients.is_empty() {
+            return;
+        }
+
         let json = match serde_json::to_string(&event) {
             Ok(j) => j + "\n",
             Err(e) => {
@@ -178,7 +184,6 @@ impl DaemonState {
                 return;
             }
         };
-        let mut clients = self.clients.lock().unwrap();
         clients.retain(|c| c.tx.send(json.clone()).is_ok());
     }
 }
@@ -210,10 +215,14 @@ pub fn run() -> crate::AppResult<()> {
             while let Ok(event) = pw_rx.recv() {
                 bridge_state.handle_pw_event(event);
             }
-            error!("PW event channel closed — PW thread died, shutting down daemon");
-            bridge_state.shutting_down.store(true, Ordering::Relaxed);
-            // Unblock the accept loop by connecting to ourselves.
-            let _ = std::os::unix::net::UnixStream::connect(&bridge_socket);
+            if !bridge_state.shutting_down.load(Ordering::Relaxed) {
+                error!("PW event channel closed unexpectedly — shutting down daemon");
+                bridge_state.shutting_down.store(true, Ordering::Relaxed);
+                // Unblock the accept loop so the daemon can exit on unexpected PW death.
+                let _ = std::os::unix::net::UnixStream::connect(&bridge_socket);
+            } else {
+                info!("PW thread terminated cleanly");
+            }
         })?;
 
     let peak_state = state.clone();
@@ -383,6 +392,8 @@ fn dispatch_request(
             info!("Shutdown requested by client");
             state.shutting_down.store(true, Ordering::Relaxed);
             let _ = cmd_tx.send(PwCommand::Terminate);
+            // Connect to our own socket to wake up the blocked incoming() loop so main can exit.
+            let _ = std::os::unix::net::UnixStream::connect(socket_path());
             Response::ok()
         }
     }
