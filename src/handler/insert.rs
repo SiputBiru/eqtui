@@ -100,7 +100,7 @@ mod tests {
 
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
         handle(key, &mut app);
-        assert_eq!(app.eq.bands[0].frequency, 500.0);
+        assert!((app.eq.bands[0].frequency - 500.0).abs() < f32::EPSILON);
         assert_eq!(app.mode, Mode::Normal);
     }
 
@@ -112,7 +112,7 @@ mod tests {
 
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
         handle(key, &mut app);
-        assert_eq!(app.eq.bands[0].gain, -10.5);
+        assert!((app.eq.bands[0].gain - (-10.5)).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -123,7 +123,7 @@ mod tests {
 
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
         handle(key, &mut app);
-        assert_eq!(app.eq.bands[0].q, 2.5);
+        assert!((app.eq.bands[0].q - 2.5).abs() < f32::EPSILON);
     }
 
     #[test]

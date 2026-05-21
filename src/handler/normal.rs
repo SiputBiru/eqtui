@@ -266,39 +266,39 @@ mod tests {
             KeyEvent::new(KeyCode::Char('+'), KeyModifiers::NONE),
             &mut app,
         );
-        assert_eq!(app.eq.bands[0].frequency, 1050.0);
+        assert!((app.eq.bands[0].frequency - 1050.0).abs() < f32::EPSILON);
 
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('-'), KeyModifiers::NONE),
             &mut app,
         );
-        assert_eq!(app.eq.bands[0].frequency, 1000.0);
+        assert!((app.eq.bands[0].frequency - 1000.0).abs() < f32::EPSILON);
 
         app.eq.column_selected = 2;
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('='), KeyModifiers::NONE),
             &mut app,
         );
-        assert_eq!(app.eq.bands[0].gain, 0.5);
+        assert!((app.eq.bands[0].gain - 0.5).abs() < f32::EPSILON);
 
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('-'), KeyModifiers::NONE),
             &mut app,
         );
-        assert_eq!(app.eq.bands[0].gain, 0.0);
+        assert!((app.eq.bands[0].gain - 0.0).abs() < f32::EPSILON);
 
         app.eq.column_selected = 3;
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('+'), KeyModifiers::NONE),
             &mut app,
         );
-        assert_eq!(app.eq.bands[0].q, 1.1);
+        assert!((app.eq.bands[0].q - 1.1).abs() < f32::EPSILON);
 
         handle_pipeline(
             KeyEvent::new(KeyCode::Char('-'), KeyModifiers::NONE),
             &mut app,
         );
-        assert_eq!(app.eq.bands[0].q, 1.0);
+        assert!((app.eq.bands[0].q - 1.0).abs() < f32::EPSILON);
 
         app.eq.column_selected = 4;
         handle_pipeline(

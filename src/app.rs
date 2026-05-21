@@ -403,6 +403,6 @@ mod tests {
         app.switch_profile(1);
         assert_eq!(app.active_profile, 1);
         assert_eq!(app.eq.bands.len(), 1);
-        assert_eq!(app.eq.bands[0].frequency, 500.0);
+        assert!((app.eq.bands[0].frequency - 500.0).abs() < f32::EPSILON);
     }
 }

@@ -30,7 +30,11 @@ impl Pipeline {
         }
     }
 
-    pub fn process(
+    /// Process audio through the pipeline.
+    ///
+    /// # Safety
+    /// `in_l`, `in_r`, `out_l`, and `out_r` must be valid for reads/writes of `n` samples.
+    pub unsafe fn process(
         &self,
         in_l: *const f32,
         in_r: *const f32,
@@ -48,7 +52,7 @@ impl Pipeline {
                 }
             }
         } else {
-            self.eq.process(in_l, in_r, out_l, out_r, n);
+            unsafe { self.eq.process(in_l, in_r, out_l, out_r, n) };
             unsafe {
                 for i in 0..n {
                     *out_l.add(i) *= preamp;
@@ -122,7 +126,7 @@ mod tests {
         let input = vec![0.7_f32; 64];
         let mut lo = vec![0.0_f32; 64];
         let mut ro = vec![0.0_f32; 64];
-        p.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len());
+        unsafe { p.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len()) };
         assert_eq!(lo, input);
     }
 
@@ -140,7 +144,7 @@ mod tests {
         let input = vec![0.3_f32; 256];
         let mut lo = vec![0.0_f32; 256];
         let mut ro = vec![0.0_f32; 256];
-        p.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len());
+        unsafe { p.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len()) };
         assert!(lo.iter().all(|s| s.is_finite()));
     }
 
@@ -157,13 +161,21 @@ mod tests {
     #[test]
     fn peak_measurement() {
         let p = Pipeline::new(SAMPLE_RATE);
-        let left_in = vec![0.5_f32, -0.8_f32, 0.3_f32];
-        let right_in = vec![0.1_f32, 0.2_f32, -0.9_f32];
-        let mut left_out = vec![0.0_f32; 3];
-        let mut right_out = vec![0.0_f32; 3];
+        let left_in = [0.5_f32, -0.8_f32, 0.3_f32];
+        let right_in = [0.1_f32, 0.2_f32, -0.9_f32];
+        let mut left_out = [0.0_f32; 3];
+        let mut right_out = [0.0_f32; 3];
 
         p.set_bypass(true);
-        p.process(left_in.as_ptr(), right_in.as_ptr(), left_out.as_mut_ptr(), right_out.as_mut_ptr(), left_in.len());
+        unsafe {
+            p.process(
+                left_in.as_ptr(),
+                right_in.as_ptr(),
+                left_out.as_mut_ptr(),
+                right_out.as_mut_ptr(),
+                left_in.len(),
+            );
+        };
 
         let (pk_l, pk_r) = p.peaks();
         assert!((pk_l - 0.8).abs() < 1e-6);
@@ -188,11 +200,23 @@ mod tests {
         let n = 1024;
         let freq = 4573.0;
         let input: Vec<f32> = (0..n)
-            .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / SAMPLE_RATE).sin())
+            .map(|i| {
+                #[allow(clippy::cast_precision_loss)]
+                let idx = i as f32;
+                (2.0 * std::f32::consts::PI * freq * idx / SAMPLE_RATE).sin()
+            })
             .collect();
         let mut lo = vec![0.0_f32; n];
         let mut ro = vec![0.0_f32; n];
-        p.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len());
+        unsafe {
+            p.process(
+                input.as_ptr(),
+                input.as_ptr(),
+                lo.as_mut_ptr(),
+                ro.as_mut_ptr(),
+                input.len(),
+            );
+        };
 
         let max_val = lo.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
         println!("Max output value with preamp: {}", max_val);

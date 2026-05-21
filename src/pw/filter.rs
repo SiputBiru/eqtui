@@ -37,7 +37,11 @@ struct FilterData {
     filter_ready_sent: Cell<bool>,
 }
 
-pub(crate) fn process_buffers(
+/// Process audio buffers using the pipeline.
+///
+/// # Safety
+/// `in_l`, `in_r`, `out_l`, and `out_r` must be valid for reads/writes of `n_samples` samples.
+pub(crate) unsafe fn process_buffers(
     pipeline: &Pipeline,
     in_l: *mut f32,
     in_r: *mut f32,
@@ -58,7 +62,9 @@ pub(crate) fn process_buffers(
         return;
     }
 
-    pipeline.process(in_l.cast_const(), in_r.cast_const(), out_l, out_r, n_samples);
+    unsafe {
+        pipeline.process(in_l.cast_const(), in_r.cast_const(), out_l, out_r, n_samples);
+    }
 }
 
 unsafe extern "C" fn process_cb(data: *mut c_void, position: *mut libspa_sys::spa_io_position) {
@@ -75,14 +81,10 @@ unsafe extern "C" fn process_cb(data: *mut c_void, position: *mut libspa_sys::sp
             return;
         }
 
-        let in_left =
-            pipewire_sys::pw_filter_get_dsp_buffer(fd.in_left, n_samples).cast::<f32>();
-        let in_right =
-            pipewire_sys::pw_filter_get_dsp_buffer(fd.in_right, n_samples).cast::<f32>();
-        let out_left =
-            pipewire_sys::pw_filter_get_dsp_buffer(fd.out_left, n_samples).cast::<f32>();
-        let out_right =
-            pipewire_sys::pw_filter_get_dsp_buffer(fd.out_right, n_samples).cast::<f32>();
+        let in_left = pipewire_sys::pw_filter_get_dsp_buffer(fd.in_left, n_samples).cast::<f32>();
+        let in_right = pipewire_sys::pw_filter_get_dsp_buffer(fd.in_right, n_samples).cast::<f32>();
+        let out_left = pipewire_sys::pw_filter_get_dsp_buffer(fd.out_left, n_samples).cast::<f32>();
+        let out_right = pipewire_sys::pw_filter_get_dsp_buffer(fd.out_right, n_samples).cast::<f32>();
 
         process_buffers(
             &fd.pipeline,
@@ -92,7 +94,7 @@ unsafe extern "C" fn process_cb(data: *mut c_void, position: *mut libspa_sys::sp
             out_right,
             n_samples as usize,
         );
-    }
+    };
 }
 
 unsafe extern "C" fn state_changed_cb(
@@ -407,14 +409,14 @@ mod tests {
     #[test]
     fn test_process_buffers_null_checks() {
         let pipeline = Pipeline::new(SAMPLE_RATE);
-        process_buffers(
+        unsafe { process_buffers(
             &pipeline,
             ptr::null_mut(),
             ptr::null_mut(),
             ptr::null_mut(),
             ptr::null_mut(),
             1024,
-        );
+        ); };
     }
 
     #[test]
@@ -424,6 +426,6 @@ mod tests {
         // don't need real provenance (using Strict Provenance API).
         let misaligned = ptr::without_provenance_mut::<f32>(0x0123_4567);
         let valid = ptr::without_provenance_mut::<f32>(0x0123_4568);
-        process_buffers(&pipeline, misaligned, valid, valid, valid, 1024);
+        unsafe { process_buffers(&pipeline, misaligned, valid, valid, valid, 1024); };
     }
 }

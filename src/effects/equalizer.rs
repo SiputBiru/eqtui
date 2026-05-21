@@ -82,7 +82,7 @@ impl EffectPlugin for Equalizer {
         clippy::many_single_char_names,
         reason = "short variable names like n/l/r/s/y are standard notation for biquad filter math — maps directly to the DSP literature and improves readability for audio engineers"
     )]
-    fn process(
+    unsafe fn process(
         &self,
         in_l: *const f32,
         in_r: *const f32,
@@ -275,7 +275,9 @@ mod tests {
 
     fn rms(samples: &[f32]) -> f32 {
         let sum_sq: f32 = samples.iter().map(|s| s * s).sum();
-        (sum_sq / samples.len() as f32).sqrt()
+        #[allow(clippy::cast_precision_loss)]
+        let len = samples.len() as f32;
+        (sum_sq / len).sqrt()
     }
 
     #[test]
@@ -285,7 +287,7 @@ mod tests {
         let input = vec![0.5_f32; 128];
         let mut lo = vec![0.0_f32; 128];
         let mut ro = vec![0.0_f32; 128];
-        eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len());
+        unsafe { eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len()) };
         assert_eq!(lo, input);
         assert_eq!(ro, input);
     }
@@ -296,7 +298,7 @@ mod tests {
         let input = vec![0.5_f32; 128];
         let mut lo = vec![0.0_f32; 128];
         let mut ro = vec![0.0_f32; 128];
-        eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len());
+        unsafe { eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len()) };
         assert_eq!(lo, input);
     }
 
@@ -317,7 +319,7 @@ mod tests {
         let input = vec![0.5_f32; n];
         let mut lo = vec![0.0_f32; n];
         let mut ro = vec![0.0_f32; n];
-        eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len());
+        unsafe { eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len()) };
         assert!((rms(&input) - rms(&lo)).abs() < 0.1);
     }
 
@@ -338,11 +340,15 @@ mod tests {
         let freq = 1000.0;
         let sr = SAMPLE_RATE;
         let input: Vec<f32> = (0..n)
-            .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / sr).sin())
+            .map(|i| {
+                #[allow(clippy::cast_precision_loss)]
+                let idx = i as f32;
+                (2.0 * std::f32::consts::PI * freq * idx / sr).sin()
+            })
             .collect();
         let mut lo = vec![0.0_f32; n];
         let mut ro = vec![0.0_f32; n];
-        eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len());
+        unsafe { eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len()) };
         assert!(
             rms(&lo) > rms(&input) * 1.3,
             "expected boost, out_rms={:.3}",
@@ -367,11 +373,15 @@ mod tests {
         let freq = 1000.0;
         let sr = SAMPLE_RATE;
         let input: Vec<f32> = (0..n)
-            .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / sr).sin())
+            .map(|i| {
+                #[allow(clippy::cast_precision_loss)]
+                let idx = i as f32;
+                (2.0 * std::f32::consts::PI * freq * idx / sr).sin()
+            })
             .collect();
         let mut lo = vec![0.0_f32; n];
         let mut ro = vec![0.0_f32; n];
-        eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len());
+        unsafe { eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len()) };
         assert!(
             rms(&lo) < rms(&input) * 0.7,
             "expected cut, out_rms={:.3}",
@@ -407,7 +417,7 @@ mod tests {
         let input = vec![0.3_f32; n];
         let mut lo = vec![0.0_f32; n];
         let mut ro = vec![0.0_f32; n];
-        eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len());
+        unsafe { eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len()) };
         // Output should exist and not panic
         assert!(lo.iter().all(|s| s.is_finite()));
     }
@@ -429,11 +439,15 @@ mod tests {
         let freq = 50.0;
         let sr = SAMPLE_RATE;
         let input: Vec<f32> = (0..n)
-            .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / sr).sin())
+            .map(|i| {
+                #[allow(clippy::cast_precision_loss)]
+                let idx = i as f32;
+                (2.0 * std::f32::consts::PI * freq * idx / sr).sin()
+            })
             .collect();
         let mut lo = vec![0.0_f32; n];
         let mut ro = vec![0.0_f32; n];
-        eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len());
+        unsafe { eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len()) };
         assert!(
             rms(&lo) > 1.3,
             "low shelf should boost bass, got {:.3}",

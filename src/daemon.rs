@@ -215,13 +215,13 @@ pub fn run() -> crate::AppResult<()> {
             while let Ok(event) = pw_rx.recv() {
                 bridge_state.handle_pw_event(event);
             }
-            if !bridge_state.shutting_down.load(Ordering::Relaxed) {
+            if bridge_state.shutting_down.load(Ordering::Relaxed) {
+                info!("PW thread terminated cleanly");
+            } else {
                 error!("PW event channel closed unexpectedly — shutting down daemon");
                 bridge_state.shutting_down.store(true, Ordering::Relaxed);
                 // Unblock the accept loop so the daemon can exit on unexpected PW death.
                 let _ = std::os::unix::net::UnixStream::connect(&bridge_socket);
-            } else {
-                info!("PW thread terminated cleanly");
             }
         })?;
 
