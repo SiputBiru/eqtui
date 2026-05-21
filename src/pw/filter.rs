@@ -3,7 +3,6 @@ use std::ffi::CString;
 use std::mem;
 use std::os::raw::{c_char, c_void};
 use std::ptr;
-use std::slice;
 use std::sync::mpsc;
 use std::sync::Arc;
 
@@ -59,26 +58,31 @@ pub(crate) fn process_buffers(
         return;
     }
 
-    let left_in = unsafe { slice::from_raw_parts(in_l, n_samples) };
-    let right_in = unsafe { slice::from_raw_parts(in_r, n_samples) };
-    let left_out = unsafe { slice::from_raw_parts_mut(out_l, n_samples) };
-    let right_out = unsafe { slice::from_raw_parts_mut(out_r, n_samples) };
-
-    pipeline.process(left_in, right_in, left_out, right_out);
+    pipeline.process(in_l.cast_const(), in_r.cast_const(), out_l, out_r, n_samples);
 }
 
-unsafe extern "C" fn process_cb(data: *mut c_void, _position: *mut libspa_sys::spa_io_position) {
+unsafe extern "C" fn process_cb(data: *mut c_void, position: *mut libspa_sys::spa_io_position) {
     unsafe {
         let fd = &*data.cast::<FilterData>();
 
+        let n_samples = if position.is_null() {
+            DEFAULT_N_SAMPLES
+        } else {
+            (*position).clock.duration as u32
+        };
+
+        if n_samples == 0 {
+            return;
+        }
+
         let in_left =
-            pipewire_sys::pw_filter_get_dsp_buffer(fd.in_left, DEFAULT_N_SAMPLES).cast::<f32>();
+            pipewire_sys::pw_filter_get_dsp_buffer(fd.in_left, n_samples).cast::<f32>();
         let in_right =
-            pipewire_sys::pw_filter_get_dsp_buffer(fd.in_right, DEFAULT_N_SAMPLES).cast::<f32>();
+            pipewire_sys::pw_filter_get_dsp_buffer(fd.in_right, n_samples).cast::<f32>();
         let out_left =
-            pipewire_sys::pw_filter_get_dsp_buffer(fd.out_left, DEFAULT_N_SAMPLES).cast::<f32>();
+            pipewire_sys::pw_filter_get_dsp_buffer(fd.out_left, n_samples).cast::<f32>();
         let out_right =
-            pipewire_sys::pw_filter_get_dsp_buffer(fd.out_right, DEFAULT_N_SAMPLES).cast::<f32>();
+            pipewire_sys::pw_filter_get_dsp_buffer(fd.out_right, n_samples).cast::<f32>();
 
         process_buffers(
             &fd.pipeline,
@@ -86,7 +90,7 @@ unsafe extern "C" fn process_cb(data: *mut c_void, _position: *mut libspa_sys::s
             in_right,
             out_left,
             out_right,
-            DEFAULT_N_SAMPLES as usize,
+            n_samples as usize,
         );
     }
 }

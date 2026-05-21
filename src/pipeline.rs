@@ -32,40 +32,48 @@ impl Pipeline {
 
     pub fn process(
         &self,
-        left_in: &[f32],
-        right_in: &[f32],
-        left_out: &mut [f32],
-        right_out: &mut [f32],
+        in_l: *const f32,
+        in_r: *const f32,
+        out_l: *mut f32,
+        out_r: *mut f32,
+        n: usize,
     ) {
         let preamp = f32::from_bits(self.preamp.load(Ordering::Relaxed));
-        let n = left_in.len().min(left_out.len());
 
         if self.bypass.load(Ordering::Relaxed) {
-            for i in 0..n {
-                left_out[i] = left_in[i] * preamp;
-                right_out[i] = right_in[i] * preamp;
+            unsafe {
+                for i in 0..n {
+                    *out_l.add(i) = *in_l.add(i) * preamp;
+                    *out_r.add(i) = *in_r.add(i) * preamp;
+                }
             }
         } else {
-            self.eq.process(left_in, right_in, left_out, right_out);
-            for i in 0..n {
-                left_out[i] *= preamp;
-                right_out[i] *= preamp;
+            self.eq.process(in_l, in_r, out_l, out_r, n);
+            unsafe {
+                for i in 0..n {
+                    *out_l.add(i) *= preamp;
+                    *out_r.add(i) *= preamp;
+                }
             }
         }
 
         let mut max_l = 0.0_f32;
-        for &sample in left_out.iter() {
-            let abs = sample.abs();
-            if abs > max_l {
-                max_l = abs;
+        unsafe {
+            for i in 0..n {
+                let abs = (*out_l.add(i)).abs();
+                if abs > max_l {
+                    max_l = abs;
+                }
             }
         }
 
         let mut max_r = 0.0_f32;
-        for &sample in right_out.iter() {
-            let abs = sample.abs();
-            if abs > max_r {
-                max_r = abs;
+        unsafe {
+            for i in 0..n {
+                let abs = (*out_r.add(i)).abs();
+                if abs > max_r {
+                    max_r = abs;
+                }
             }
         }
 
@@ -114,7 +122,7 @@ mod tests {
         let input = vec![0.7_f32; 64];
         let mut lo = vec![0.0_f32; 64];
         let mut ro = vec![0.0_f32; 64];
-        p.process(&input, &input, &mut lo, &mut ro);
+        p.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len());
         assert_eq!(lo, input);
     }
 
@@ -132,7 +140,7 @@ mod tests {
         let input = vec![0.3_f32; 256];
         let mut lo = vec![0.0_f32; 256];
         let mut ro = vec![0.0_f32; 256];
-        p.process(&input, &input, &mut lo, &mut ro);
+        p.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len());
         assert!(lo.iter().all(|s| s.is_finite()));
     }
 
@@ -155,7 +163,7 @@ mod tests {
         let mut right_out = vec![0.0_f32; 3];
 
         p.set_bypass(true);
-        p.process(&left_in, &right_in, &mut left_out, &mut right_out);
+        p.process(left_in.as_ptr(), right_in.as_ptr(), left_out.as_mut_ptr(), right_out.as_mut_ptr(), left_in.len());
 
         let (pk_l, pk_r) = p.peaks();
         assert!((pk_l - 0.8).abs() < 1e-6);
@@ -184,7 +192,7 @@ mod tests {
             .collect();
         let mut lo = vec![0.0_f32; n];
         let mut ro = vec![0.0_f32; n];
-        p.process(&input, &input, &mut lo, &mut ro);
+        p.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len());
 
         let max_val = lo.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
         println!("Max output value with preamp: {}", max_val);

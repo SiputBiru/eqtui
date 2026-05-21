@@ -84,20 +84,23 @@ impl EffectPlugin for Equalizer {
     )]
     fn process(
         &self,
-        left_in: &[f32],
-        right_in: &[f32],
-        left_out: &mut [f32],
-        right_out: &mut [f32],
+        in_l: *const f32,
+        in_r: *const f32,
+        out_l: *mut f32,
+        out_r: *mut f32,
+        n: usize,
     ) {
-        let n = left_in.len().min(left_out.len());
-
         let Ok(bypass) = self.bypass.read() else {
             tracing::error!("EQ RwLock poisoned (bypass) in audio thread");
             return;
         };
         if *bypass {
-            left_out[..n].copy_from_slice(&left_in[..n]);
-            right_out[..n].copy_from_slice(&right_in[..n]);
+            unsafe {
+                for i in 0..n {
+                    *out_l.add(i) = *in_l.add(i);
+                    *out_r.add(i) = *in_r.add(i);
+                }
+            }
             return;
         }
 
@@ -106,8 +109,12 @@ impl EffectPlugin for Equalizer {
             return;
         };
         if bands.is_empty() {
-            left_out[..n].copy_from_slice(&left_in[..n]);
-            right_out[..n].copy_from_slice(&right_in[..n]);
+            unsafe {
+                for i in 0..n {
+                    *out_l.add(i) = *in_l.add(i);
+                    *out_r.add(i) = *in_r.add(i);
+                }
+            }
             return;
         }
 
@@ -120,36 +127,50 @@ impl EffectPlugin for Equalizer {
             return;
         };
 
-        for i in 0..n {
-            let mut l = left_in[i];
-            let mut r = right_in[i];
+        unsafe {
+            for i in 0..n {
+                let mut l = *in_l.add(i);
+                let mut r = *in_r.add(i);
 
-            for (band_i, coeffs) in bands.iter().enumerate() {
-                let s = &mut states_l[band_i];
-                let y = coeffs.b0 * l + coeffs.b1 * s.x1 + coeffs.b2 * s.x2
-                    - coeffs.a1 * s.y1
-                    - coeffs.a2 * s.y2;
-                s.x2 = s.x1;
-                s.x1 = l;
-                s.y2 = s.y1;
-                s.y1 = y;
-                l = y;
+                for (band_i, coeffs) in bands.iter().enumerate() {
+                    let s = &mut states_l[band_i];
+                    let mut y = coeffs.b0 * l + coeffs.b1 * s.x1 + coeffs.b2 * s.x2
+                        - coeffs.a1 * s.y1
+                        - coeffs.a2 * s.y2;
+                    
+                    // Flush denormals to zero to prevent CPU spikes and audio static
+                    if y.abs() < 1.0e-15 {
+                        y = 0.0;
+                    }
+
+                    s.x2 = s.x1;
+                    s.x1 = l;
+                    s.y2 = s.y1;
+                    s.y1 = y;
+                    l = y;
+                }
+
+                for (band_i, coeffs) in bands.iter().enumerate() {
+                    let s = &mut states_r[band_i];
+                    let mut y = coeffs.b0 * r + coeffs.b1 * s.x1 + coeffs.b2 * s.x2
+                        - coeffs.a1 * s.y1
+                        - coeffs.a2 * s.y2;
+                    
+                    // Flush denormals to zero to prevent CPU spikes and audio static
+                    if y.abs() < 1.0e-15 {
+                        y = 0.0;
+                    }
+
+                    s.x2 = s.x1;
+                    s.x1 = r;
+                    s.y2 = s.y1;
+                    s.y1 = y;
+                    r = y;
+                }
+
+                *out_l.add(i) = l;
+                *out_r.add(i) = r;
             }
-
-            for (band_i, coeffs) in bands.iter().enumerate() {
-                let s = &mut states_r[band_i];
-                let y = coeffs.b0 * r + coeffs.b1 * s.x1 + coeffs.b2 * s.x2
-                    - coeffs.a1 * s.y1
-                    - coeffs.a2 * s.y2;
-                s.x2 = s.x1;
-                s.x1 = r;
-                s.y2 = s.y1;
-                s.y1 = y;
-                r = y;
-            }
-
-            left_out[i] = l;
-            right_out[i] = r;
         }
     }
 
@@ -264,7 +285,7 @@ mod tests {
         let input = vec![0.5_f32; 128];
         let mut lo = vec![0.0_f32; 128];
         let mut ro = vec![0.0_f32; 128];
-        eq.process(&input, &input, &mut lo, &mut ro);
+        eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len());
         assert_eq!(lo, input);
         assert_eq!(ro, input);
     }
@@ -275,7 +296,7 @@ mod tests {
         let input = vec![0.5_f32; 128];
         let mut lo = vec![0.0_f32; 128];
         let mut ro = vec![0.0_f32; 128];
-        eq.process(&input, &input, &mut lo, &mut ro);
+        eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len());
         assert_eq!(lo, input);
     }
 
@@ -296,7 +317,7 @@ mod tests {
         let input = vec![0.5_f32; n];
         let mut lo = vec![0.0_f32; n];
         let mut ro = vec![0.0_f32; n];
-        eq.process(&input, &input, &mut lo, &mut ro);
+        eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len());
         assert!((rms(&input) - rms(&lo)).abs() < 0.1);
     }
 
@@ -321,7 +342,7 @@ mod tests {
             .collect();
         let mut lo = vec![0.0_f32; n];
         let mut ro = vec![0.0_f32; n];
-        eq.process(&input, &input, &mut lo, &mut ro);
+        eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len());
         assert!(
             rms(&lo) > rms(&input) * 1.3,
             "expected boost, out_rms={:.3}",
@@ -350,7 +371,7 @@ mod tests {
             .collect();
         let mut lo = vec![0.0_f32; n];
         let mut ro = vec![0.0_f32; n];
-        eq.process(&input, &input, &mut lo, &mut ro);
+        eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len());
         assert!(
             rms(&lo) < rms(&input) * 0.7,
             "expected cut, out_rms={:.3}",
@@ -386,7 +407,7 @@ mod tests {
         let input = vec![0.3_f32; n];
         let mut lo = vec![0.0_f32; n];
         let mut ro = vec![0.0_f32; n];
-        eq.process(&input, &input, &mut lo, &mut ro);
+        eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len());
         // Output should exist and not panic
         assert!(lo.iter().all(|s| s.is_finite()));
     }
@@ -412,7 +433,7 @@ mod tests {
             .collect();
         let mut lo = vec![0.0_f32; n];
         let mut ro = vec![0.0_f32; n];
-        eq.process(&input, &input, &mut lo, &mut ro);
+        eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len());
         assert!(
             rms(&lo) > 1.3,
             "low shelf should boost bass, got {:.3}",

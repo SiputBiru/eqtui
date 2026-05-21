@@ -2,7 +2,9 @@ pub mod equalizer;
 
 pub trait EffectPlugin {
     fn name(&self) -> &str;
-    fn process(&self, left_in: &[f32], right_in: &[f32], left_out: &mut [f32], right_out: &mut [f32]);
+    /// Process `n` samples. Raw pointers are used to safely handle
+    /// PipeWire in-place processing where input and output buffers may alias.
+    fn process(&self, in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, n: usize);
     fn bypass(&self) -> bool;
     fn set_bypass(&self, bypass: bool);
     fn reset(&self);
