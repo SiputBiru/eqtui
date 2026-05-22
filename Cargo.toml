@@ -1,13 +1,14 @@
 [package]
 name = "eqtui"
-version = "0.1.1-alpha.0"
-description = "Terminal-native audio effects processor for PipeWire"
+version = "0.1.1-alpha.1"
+description = "Terminal-native(TUI) audio effects processor for PipeWire"
 authors = ["SiputBiru <hillsforrest03@gmail.com>"]
 license = "GPL-2.0-only"
 repository = "https://github.com/SiputBiru/eqtui"
 readme = "README.md"
 keywords = ["pipewire", "equalizer", "tui", "audio", "dsp"]
 categories = ["multimedia::audio", "command-line-utilities"]
+exclude = [".cache", ".tmp/", ".github/", ".docs/", "target/"]
 edition = "2024"
 
 [dependencies]
