@@ -13,7 +13,7 @@ crossterm = { version = "0.29", default-features = false, features = [
 ] }
 daemonize = "0.5"
 dirs = "6"
-fs4 = "0.12"
+fs4 = "1.1"
 libc = "0.2"
 libspa-sys = "0.10.0"
 pipewire = "0.10.0"
