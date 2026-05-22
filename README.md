@@ -1,11 +1,13 @@
 # eqtui
 
+[![License: GPL-2.0-only](https://img.shields.io/badge/License-GPL--2.0--only-blue.svg)](LICENSE)
+
 A keyboard-driven parametric EQ for PipeWire that lives in the terminal.
 Built with [Ratatui](https://ratatui.rs).
 
 [EasyEffects](https://github.com/wwmm/easyeffects) is great, but sometimes I just
 want a simple EQ — not a full DSP pipeline with a GTK(now Qt) UI. And also
-i just want to learn little bit about DSP stuff.
+i want to learn little bit about DSP stuff.
 
 Runs as a background daemon so the EQ keeps going even after closing the TUI.
 
@@ -19,6 +21,67 @@ eqtui stop      # open the TUI
 ```
 
 Close with `q` — the EQ keeps running. Re-attach anytime with `eqtui attach`.
+
+## Keybindings
+
+`eqtui` uses Vim-inspired keybindings across several modes.
+
+### Normal Mode (Navigation & Quick Actions)
+
+| Key | Action |
+| --- | --- |
+| `q` | Quit TUI (Daemon stays running) |
+| `Tab` | Switch focus between Devices and Pipeline (EQ) |
+| `j` / `Down` | Move selection down |
+| `k` / `Up` | Move selection up |
+| `h` / `Left` | Move column selection left (Pipeline only) |
+| `l` / `Right` | Move column selection right (Pipeline/Devices) |
+| `i` | Enter **Insert Mode** to edit selected cell |
+| `v` | Enter **Visual Mode** |
+| `:` | Enter **Command Mode** |
+| `a` | Add a new EQ band |
+| `dd` | Delete selected EQ band |
+| `gg` | Jump to the first EQ band |
+| `r` | Reset selected band (Gain: 0, Q: 1) |
+| `R` | Reset all bands in current profile |
+| `+` / `=` | Increment selected cell value |
+| `-` | Decrement selected cell value |
+| `{` / `}` | Switch to previous/next profile |
+| `b` | Toggle EQ Bypass |
+| `c` / `C` | Toggle connection to selected device (Devices only) |
+
+### Insert Mode (Cell Editing)
+
+| Key | Action |
+| --- | --- |
+| `Enter` | Confirm changes and return to Normal Mode |
+| `Esc` | Cancel changes and return to Normal Mode |
+| `Backspace` | Delete character |
+| `Any char` | Type into cell |
+
+**Filter Types:** In the "Type" column, type `PK` (Peak), `LS` (LowShelf), or `HS` (HighShelf).
+
+### Visual Mode (Bulk Operations)
+
+| Key | Action |
+| --- | --- |
+| `j` / `Down` | Move selection down |
+| `k` / `Up` | Move selection up |
+| `d` | Delete selected EQ band and return to Normal Mode |
+| `Esc` | Return to Normal Mode |
+
+### Command Mode
+
+| Command | Action |
+| --- | --- |
+| `:q` | Quit TUI |
+| `:w` | Save current profile to `profiles.toml` |
+| `:flat` | Set all gains in current profile to 0.0dB |
+| `:load <path>` | Load a PEQ file (AutoEQ/Squiglink format) |
+| `:bypass` | Toggle EQ Bypass |
+| `:preamp <val>` | Set preamp gain (e.g., `:preamp -6.0`) |
+| `:add [freq]` | Add a band at optional frequency (default 1000Hz) |
+| `Esc` | Clear command and return to Normal Mode |
 
 ## Features (the short version)
 
@@ -41,10 +104,28 @@ Settings are stored in standard `XDG` locations.
 
 There are 5 profile slots available for saving different presets.
 
-- **Saving:** Use `:w` to save the current EQ bands and preamp gain to the active slot.
-- **Switching:** Navigate between profiles in the TUI (number keys or Tab).
+- **Saving & Applying:** Use `:w` to save the current EQ bands and preamp gain to the active slot. This also sends the settings to the audio engine.
+- **Switching:** Use `{` and `}` to navigate between profiles.
 - **Persistence:** The daemon loads these profiles automatically on startup.
 - **External Files:** Profiles can be linked to external PEQ files. These profiles are **read-only** and display an `[RO]` indicator in the TUI.
+
+#### Resetting Profiles
+
+To reset EQ setings there is three ways:
+
+- **Reset All Bands (`R`)**: Resets every band in the current profile (Gain: 0.0, Q: 1.0).
+- **Reset Selected Band (`r`)**: Resets only the highlighted band (Gain: 0.0, Q: 1.0).
+- **Flatten Gains (`:flat`)**: Sets all gains to 0.0dB but keeps your frequencies and Q values.
+
+#### Normal vs Read-Only (`[RO]`)
+
+| Feature | Normal Profile | `[RO]` Profile |
+| :--- | :--- | :--- |
+| **Reset in UI** | Yes | Yes (Temporary) |
+| **Apply to Sound** | **Yes (`:w`)** | **No** (Locked to file) |
+| **Save to Disk** | **Yes (`:w`)** | **No** (Locked to file) |
+
+*Note: Changes made to `[RO]` profiles in the TUI are temporary and cannot be saved or applied to the DSP engine.*
 
 ### Profile File Format
 

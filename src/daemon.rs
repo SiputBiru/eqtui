@@ -1,3 +1,6 @@
+// Copyright (C) 2026 SiputBiru <hillsforrest03@gmail.com>
+// SPDX-License-Identifier: GPL-2.0-only
+
 //! Daemon process — owns the `PipeWire` audio pipeline and serves
 //! TUI/CLI clients over a Unix-domain socket.
 //!

@@ -3,7 +3,7 @@ name = "eqtui"
 version = "0.1.0"
 description = "Terminal-native audio effects processor for PipeWire"
 authors = ["SiputBiru <hillsforrest03@gmail.com>"]
-license = "MIT"
+license = "GPL-2.0-only"
 edition = "2024"
 
 [dependencies]

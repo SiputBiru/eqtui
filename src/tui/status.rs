@@ -1,3 +1,6 @@
+// Copyright (C) 2026 SiputBiru <hillsforrest03@gmail.com>
+// SPDX-License-Identifier: GPL-2.0-only
+
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};

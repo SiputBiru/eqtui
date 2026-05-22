@@ -1,3 +1,6 @@
+// Copyright (C) 2026 SiputBiru <hillsforrest03@gmail.com>
+// SPDX-License-Identifier: GPL-2.0-only
+
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use color_eyre::eyre::Context;
