@@ -15,6 +15,7 @@ Runs as a background daemon so the EQ keeps going even after closing the TUI.
 cargo install eqtui
 eqtui daemon    # start the engine (background)
 eqtui           # open the TUI
+eqtui stop      # open the TUI
 ```
 
 Close with `q` — the EQ keeps running. Re-attach anytime with `eqtui attach`.
@@ -50,6 +51,7 @@ There are 5 profile slots available for saving different presets.
 The `profiles.toml` file contains an array of 5 profiles. A profile can either define its own `bands` or link to an external `path`.
 
 **Example with external file:**
+
 ```toml
 [[profiles]]
 name = "AutoEQ Preset"
@@ -57,6 +59,7 @@ path = "@eqs/CVJVIVIANS1_Filters.txt"
 ```
 
 **Example with inline data:**
+
 ```toml
 [[profiles]]
 name = "Custom Tune"
@@ -69,13 +72,14 @@ filter_type = "LowShelf"
 ```
 
 **Fields:**
+
 - `path`: (Optional) Portable path to an external PEQ file. Use `@` for paths relative to the config directory.
 - `preamp`: Global gain offset in dB.
 - `bands`: List of EQ filters (ignored if `path` is set).
-    - `frequency`: Center frequency in Hz.
-    - `gain`: Boost or cut in dB.
-    - `q`: Quality factor (bandwidth).
-    - `filter_type`: Either `"Peak"`, `"LowShelf"`, or `"HighShelf"`.
+  - `frequency`: Center frequency in Hz.
+  - `gain`: Boost or cut in dB.
+  - `q`: Quality factor (bandwidth).
+  - `filter_type`: Either `"Peak"`, `"LowShelf"`, or `"HighShelf"`.
 
 ### Customizing Keys
 
