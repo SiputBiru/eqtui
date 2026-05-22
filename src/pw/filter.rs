@@ -276,7 +276,7 @@ pub(crate) fn create_eq_filter(
     }
 
     // Register four DSP ports. Port names follow PipeWire naming convention
-    // so that tools like pw-link can discover and wire them.
+    // to enable discovery and wiring by tools like pw-link.
     // Safety: filter is non-null (checked above). Port pointers are freed
     // by PipeWire when the filter is destroyed.
     let in_left = unsafe { add_dsp_port(filter, "input_FL", "FL", libspa_sys::SPA_DIRECTION_INPUT) };

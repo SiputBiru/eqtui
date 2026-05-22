@@ -17,7 +17,7 @@ Runs as a background daemon so the EQ keeps going even after closing the TUI.
 cargo install eqtui
 eqtui daemon    # start the engine (background)
 eqtui           # open the TUI
-eqtui stop      # open the TUI
+eqtui stop      # stop the daemon
 ```
 
 Close with `q` — the EQ keeps running. Re-attach anytime with `eqtui attach`.

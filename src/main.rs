@@ -5,7 +5,6 @@ use std::io;
 use std::sync::Arc;
 
 use daemonize::Daemonize;
-use fs4::fs_std::FileExt;
 use ratatui::backend::CrosstermBackend;
 use tracing_error::ErrorLayer;
 use tracing_subscriber::prelude::*;
@@ -69,7 +68,7 @@ fn main() -> AppResult<()> {
             // Acquire exclusive advisory lock (kernel-level).
             // This is robust against crashes and prevents multiple instances
             // from running simultaneously even if a stale PID file exists.
-            if let Err(e) = lock_file.try_lock_exclusive() {
+            if let Err(e) = lock_file.try_lock() {
                 eprintln!("Daemon already running. Use `eqtui stop` to stop it first.");
                 tracing::error!(%e, "Failed to acquire daemon lock; another instance might be running");
                 std::process::exit(1);
