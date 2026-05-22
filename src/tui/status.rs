@@ -141,16 +141,32 @@ pub fn render_hints(app: &App, frame: &mut Frame, area: Rect) {
             ]);
         }
         Mode::Command => {
-            spans.extend(vec![
-                Span::from(":").bold(),
-                Span::styled(&app.command_input, Style::default().fg(Color::Yellow)),
-                Span::styled(
-                    "▌",
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::SLOW_BLINK),
-                ),
-            ]);
+            let value = app.command_input.value();
+            let cursor = app.command_input.cursor();
+
+            spans.push(Span::from(":").bold());
+
+            // Text before cursor
+            let before: String = value.chars().take(cursor).collect();
+            if !before.is_empty() {
+                spans.push(Span::styled(before, Style::default().fg(Color::Yellow)));
+            }
+
+            // Character at cursor (to apply blink)
+            let char_at_cursor = value.chars().nth(cursor).unwrap_or(' ');
+            spans.push(Span::styled(
+                char_at_cursor.to_string(),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::REVERSED)
+                    .add_modifier(Modifier::SLOW_BLINK),
+            ));
+
+            // Text after cursor
+            let after: String = value.chars().skip(cursor + 1).collect();
+            if !after.is_empty() {
+                spans.push(Span::styled(after, Style::default().fg(Color::Yellow)));
+            }
         }
         Mode::Visual => {}
     }

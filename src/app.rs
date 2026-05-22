@@ -73,7 +73,7 @@ pub struct App {
     cached_peak_r: f32,
 
     pub nodes_selected: usize,
-    pub command_input: String,
+    pub command_input: Input,
     pub last_key: Option<char>,
 
     /// Transient status message with remaining tick count.
@@ -103,7 +103,7 @@ impl App {
             nodes: Vec::new(),
             nodes_selected: 0,
             pw_connected: false,
-            command_input: String::new(),
+            command_input: Input::default(),
             eq: EqState {
                 bands,
                 ..EqState::default()
@@ -343,7 +343,7 @@ impl App {
             nodes: Vec::new(),
             nodes_selected: 0,
             pw_connected: false,
-            command_input: String::new(),
+            command_input: Input::default(),
             eq: EqState::default(),
             preamp: 0.0,
             profiles: vec![Profile {

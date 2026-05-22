@@ -115,7 +115,7 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
         KeyCode::Char('v') => app.mode = Mode::Visual,
         KeyCode::Char(':') => {
             app.mode = Mode::Command;
-            app.command_input.clear();
+            app.command_input.reset();
         }
         KeyCode::Char('b') => {
             app.eq.bypass = !app.eq.bypass;

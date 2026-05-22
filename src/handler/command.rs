@@ -1,7 +1,8 @@
 // Copyright (C) 2026 SiputBiru <hillsforrest03@gmail.com>
 // SPDX-License-Identifier: GPL-2.0-only
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{Event, KeyCode, KeyEvent};
+use tui_input::backend::crossterm::EventHandler;
 
 use crate::app::{App, Mode};
 use crate::state::{EqBand, FilterType};
@@ -10,21 +11,17 @@ pub fn handle(key: KeyEvent, app: &mut App) {
     match key.code {
         KeyCode::Esc => {
             app.mode = Mode::Normal;
-            app.command_input.clear();
+            app.command_input.reset();
         }
         KeyCode::Enter => {
-            let cmd = app.command_input.clone();
-            app.command_input.clear();
+            let cmd = app.command_input.value().to_string();
+            app.command_input.reset();
             app.mode = Mode::Normal;
             exec(&cmd, app);
         }
-        KeyCode::Char(c) => {
-            app.command_input.push(c);
+        _ => {
+            app.command_input.handle_event(&Event::Key(key));
         }
-        KeyCode::Backspace => {
-            app.command_input.pop();
-        }
-        _ => {}
     }
 }
 
@@ -72,5 +69,75 @@ fn exec(cmd: &str, app: &mut App) {
             });
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::sync::Arc;
+
+    fn setup_app() -> App {
+        let config = Arc::new(Config::default());
+        App::new_test(config)
+    }
+
+    #[test]
+    fn test_handle_command_typing() {
+        let mut app = setup_app();
+        app.mode = Mode::Command;
+
+        handle(
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+            &mut app,
+        );
+        assert_eq!(app.command_input.value(), "q");
+    }
+
+    #[test]
+    fn test_handle_command_backspace() {
+        let mut app = setup_app();
+        app.mode = Mode::Command;
+        handle(
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+            &mut app,
+        );
+        handle(
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+            &mut app,
+        );
+        assert_eq!(app.command_input.value(), "");
+    }
+
+    #[test]
+    fn test_handle_command_enter() {
+        let mut app = setup_app();
+        app.mode = Mode::Command;
+        handle(
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+            &mut app,
+        );
+        handle(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut app);
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.command_input.value(), "");
+        assert!(!app.running); // :q sets running to false
+    }
+
+    #[test]
+    fn test_handle_command_esc() {
+        let mut app = setup_app();
+        app.mode = Mode::Command;
+        handle(
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+            &mut app,
+        );
+        handle(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &mut app);
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.command_input.value(), "");
+        assert!(app.running);
     }
 }
