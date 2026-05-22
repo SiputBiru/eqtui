@@ -116,7 +116,7 @@ unsafe extern "C" fn state_changed_cb(
         let _ = fd.tx.send(PwEvent::FilterStateChanged(filter_state));
 
         // When the filter reaches PAUSED state, its ports are registered.
-        // We link here because STREAMING may never be reached if there
+        // Linking occurs here because STREAMING may never be reached if there
         // are no links to pull/push data.
         if (new == pipewire_sys::pw_filter_state_PW_FILTER_STATE_PAUSED
             || new == pipewire_sys::pw_filter_state_PW_FILTER_STATE_STREAMING)
@@ -190,7 +190,7 @@ impl FilterHandle {
             pipewire_sys::pw_filter_set_active(self.filter, false);
             pipewire_sys::pw_filter_disconnect(self.filter);
             // filter_destroy cleans up PipeWire's internal hook references —
-            // must happen BEFORE we free our listener and events heap allocations.
+            // must happen BEFORE listener and events heap allocations are freed.
             pipewire_sys::pw_filter_destroy(self.filter);
             if !self.filter_data_ptr.is_null() {
                 drop(Box::from_raw(self.filter_data_ptr));
@@ -427,5 +427,8 @@ mod tests {
         let misaligned = ptr::without_provenance_mut::<f32>(0x0123_4567);
         let valid = ptr::without_provenance_mut::<f32>(0x0123_4568);
         unsafe { process_buffers(&pipeline, misaligned, valid, valid, valid, 1024); };
+    }
+}
+
     }
 }

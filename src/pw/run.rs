@@ -110,7 +110,7 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
         // Poll whether an audio source is linked to the null sink's
         // playback ports.  `pw-link -I` lists all links as
         //   {out_id}:{out_port} -> {in_id}:{in_port}
-        // We check if any link targets the null sink's input.
+        // Checks if any link targets the null sink's input.
         if let Some(ns_id) = ns_timer.get() {
             let has_source = check_null_sink_input_source(ns_id);
             let _ = tx_snapshot.send(PwEvent::NullSinkInputState { has_source });
@@ -123,7 +123,7 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
     let nullsink_cell: Cell<Option<NullSinkHandle>> = Cell::new(None);
 
     // Create the virtual null-audio-sink BEFORE the equalizer filter.
-    // We attach a proxy-listener that fires when the proxy is bound to a
+    // Attaching a proxy-listener that fires when the proxy is bound to a
     // server-side global id; that callback then creates the filter wired
     // to the null sink's monitor ports. This ordering ensures wiremix can
     // discover eqtui as a selectable Audio/Sink.

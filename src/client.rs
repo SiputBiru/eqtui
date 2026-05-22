@@ -17,7 +17,7 @@ pub struct DaemonClient {
 impl DaemonClient {
     /// Connect to the daemon, auto-launching if none is running.
     pub fn connect() -> crate::AppResult<Self> {
-        let path = socket_path();
+        let path = socket_path()?;
 
         if let Ok(client) = Self::try_connect(&path) {
             info!("Connected to existing daemon");
@@ -44,6 +44,12 @@ impl DaemonClient {
 
     fn try_connect(path: &PathBuf) -> std::io::Result<Self> {
         let stream = UnixStream::connect(path)?;
+
+        // Set 5s timeouts to prevent TUI/CLI hangs if the daemon is unresponsive.
+        let timeout = Some(Duration::from_secs(5));
+        stream.set_read_timeout(timeout)?;
+        stream.set_write_timeout(timeout)?;
+
         let reader = BufReader::new(
             stream.try_clone().map_err(|e| {
                 std::io::Error::new(
@@ -137,15 +143,25 @@ fn check_ok(resp: Response) -> crate::AppResult<()> {
     }
 }
 
-fn socket_path() -> PathBuf {
-    runtime_dir().join("eqtui.sock")
+fn socket_path() -> crate::AppResult<PathBuf> {
+    Ok(runtime_dir()?.join("eqtui.sock"))
 }
 
-fn runtime_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
-        PathBuf::from(dir)
-    } else {
-        PathBuf::from("/tmp")
+/// Returns the XDG runtime directory for the current user.
+///
+/// This directory is used for the Unix socket.
+/// Strict requirement for `XDG_RUNTIME_DIR` to be set for security;
+/// falling back to /tmp would allow other local users to intercept
+/// or control the daemon.
+fn runtime_dir() -> crate::AppResult<PathBuf> {
+    match std::env::var("XDG_RUNTIME_DIR") {
+        Ok(dir) if !dir.is_empty() => Ok(PathBuf::from(dir)),
+        _ => Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "XDG_RUNTIME_DIR environment variable is not set or is empty. \
+            This is required for secure operation.",
+        )
+        .into()),
     }
 }
 

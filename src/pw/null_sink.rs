@@ -66,7 +66,7 @@ impl NullSinkHandle {
 }
 
 // Proxy listener callback — fires when the null-sink proxy is bound to a
-// server-side global id. This is how we learn the null sink's real node id
+// server-side global id. Enables learning the null sink's real node id
 // so the equalizer filter can be wired to it.
 //
 // Safety: called by PipeWire on the mainloop thread after the proxy is
@@ -167,7 +167,7 @@ pub(crate) fn create_null_sink(
 
     // The returned void pointer is actually a pw_proxy.
     // The bound_cb will learn the real (server-assigned) global id when the
-    // proxy is bound; we send NullSinkCreated from there, not here.
+    // proxy is bound; NullSinkCreated is sent from there, not here.
     let proxy = proxy_ptr.cast::<pipewire_sys::pw_proxy>();
 
     Some(NullSinkHandle {

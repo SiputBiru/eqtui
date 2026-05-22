@@ -42,9 +42,15 @@ impl Pipeline {
         out_r: *mut f32,
         n: usize,
     ) {
-        let preamp = f32::from_bits(self.preamp.load(Ordering::Relaxed));
+        debug_assert!(!in_l.is_null(), "Input left buffer is null");
+        debug_assert!(!in_r.is_null(), "Input right buffer is null");
+        debug_assert!(!out_l.is_null(), "Output left buffer is null");
+        debug_assert!(!out_r.is_null(), "Output right buffer is null");
+        debug_assert!(n > 0, "Process called with zero samples");
 
-        if self.bypass.load(Ordering::Relaxed) {
+        let preamp = f32::from_bits(self.preamp.load(Ordering::Acquire));
+
+        if self.bypass.load(Ordering::Acquire) {
             unsafe {
                 for i in 0..n {
                     *out_l.add(i) = *in_l.add(i) * preamp;
@@ -94,7 +100,8 @@ impl Pipeline {
 
     pub fn set_preamp(&self, gain_db: f32) {
         let linear = 10.0_f32.powf(gain_db / 20.0);
-        self.preamp.store(linear.to_bits(), Ordering::Relaxed);
+        // Using Release ordering to ensure the linear gain value is visible to the DSP thread.
+        self.preamp.store(linear.to_bits(), Ordering::Release);
     }
 
     pub fn set_bands(&self, bands: Vec<EqBand>, sample_rate: f32) -> AppResult<()> {
@@ -104,11 +111,12 @@ impl Pipeline {
     }
 
     pub fn set_bypass(&self, bypass: bool) {
-        self.bypass.store(bypass, Ordering::Relaxed);
+        // Using Release ordering to ensure the bypass state is visible to the DSP thread.
+        self.bypass.store(bypass, Ordering::Release);
     }
 
     pub fn is_bypassed(&self) -> bool {
-        self.bypass.load(Ordering::Relaxed)
+        self.bypass.load(Ordering::Acquire)
     }
 }
 

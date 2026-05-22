@@ -43,7 +43,7 @@ pub fn load() -> Vec<Profile> {
     };
 
     if let Ok(mut pf) = toml::from_str::<ProfilesFile>(&contents) {
-        // Ensure we always have exactly PROFILE_COUNT profiles.
+        // Enforces exactly PROFILE_COUNT profiles.
         while pf.profiles.len() < PROFILE_COUNT {
             pf.profiles.push(Profile {
                 name: format!("Profile {}", pf.profiles.len() + 1),

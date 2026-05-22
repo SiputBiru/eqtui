@@ -18,11 +18,16 @@ use std::time::Duration;
 
 use pipewire::channel;
 use tracing::{error, info, warn};
+use uds::UnixStreamExt;
 
 use crate::pipeline::{Pipeline, SAMPLE_RATE};
 use crate::protocol::{DaemonStatus, PushEvent, Request, Response};
 use crate::pw;
 use crate::state::{EqBand, FilterState, NodeInfo, NullSinkState, PwCommand, PwEvent};
+
+/// Maximum number of concurrent client connections allowed.
+/// This protects against resource exhaustion `DoS` (thread/memory leakage).
+const MAX_CLIENTS: usize = 10;
 
 pub struct DaemonState {
     pub pipeline: Arc<Pipeline>,
@@ -188,11 +193,16 @@ impl DaemonState {
     }
 }
 
-pub fn run() -> crate::AppResult<()> {
-    let socket_path = socket_path();
-    let lock_path = lock_path();
+pub fn run(mut lock_file: std::fs::File) -> crate::AppResult<()> {
+    // Write process PID to the lock file so that CLI commands (like stop/load)
+    // can find the daemon. The exclusive lock is already held by the parent and
+    // inherited by the child.
+    use std::io::Write;
+    lock_file.set_len(0)?; // Clear any previous content
+    lock_file.write_all(std::process::id().to_string().as_bytes())?;
+    lock_file.flush()?;
 
-    check_lock_file(&lock_path)?;
+    let socket_path = socket_path()?;
 
     let pipeline = Arc::new(Pipeline::new(SAMPLE_RATE));
     let state = Arc::new(DaemonState::new(pipeline.clone()));
@@ -263,6 +273,20 @@ pub fn run() -> crate::AppResult<()> {
             }
         };
 
+        // Enforce concurrent connection limit to prevent resource exhaustion (DoS).
+        // The length of the clients list is checked before spawning a new handler thread.
+        {
+            let clients = state.clients.lock().unwrap();
+            if clients.len() >= MAX_CLIENTS {
+                warn!(
+                    limit = MAX_CLIENTS,
+                    "Maximum concurrent clients reached; dropping connection"
+                );
+                let _ = send_resp(&stream, Response::error("Maximum concurrent clients reached"));
+                continue;
+            }
+        }
+
         let handler_state = state.clone();
         let handler_cmd_tx = cmd_tx.clone();
 
@@ -279,7 +303,6 @@ pub fn run() -> crate::AppResult<()> {
     let _ = cmd_tx.send(PwCommand::Terminate);
     let _ = pw_thread.join();
     let _ = fs::remove_file(&socket_path);
-    let _ = fs::remove_file(&lock_path);
     info!("Daemon exited cleanly");
     Ok(())
 }
@@ -290,6 +313,30 @@ fn handle_client(
     cmd_tx: channel::Sender<PwCommand>,
     client_id: u64,
 ) {
+    // Verify that the connecting client is the same user as the daemon.
+    // This prevents unauthorized local users from sending commands even if
+    // they have filesystem access to the socket.
+    let creds = match stream.initial_peer_credentials() {
+        Ok(c) => c,
+        Err(e) => {
+            error!(%e, client_id, "Failed to get peer credentials; rejecting connection");
+            return;
+        }
+    };
+
+    let peer_uid = creds.euid();
+    let my_uid = unsafe { libc::getuid() };
+
+    if peer_uid != my_uid {
+        warn!(
+            client_id,
+            peer_uid,
+            my_uid,
+            "Unauthorized connection attempt from different UID; rejecting"
+        );
+        return;
+    }
+
     let read_stream = match stream.try_clone() {
         Ok(s) => s,
         Err(e) => {
@@ -392,8 +439,10 @@ fn dispatch_request(
             info!("Shutdown requested by client");
             state.shutting_down.store(true, Ordering::Relaxed);
             let _ = cmd_tx.send(PwCommand::Terminate);
-            // Connect to our own socket to wake up the blocked incoming() loop so main can exit.
-            let _ = std::os::unix::net::UnixStream::connect(socket_path());
+            // Connect to the socket to wake up the blocked incoming() loop so main can exit.
+            if let Ok(path) = socket_path() {
+                let _ = std::os::unix::net::UnixStream::connect(path);
+            }
             Response::ok()
         }
     }
@@ -426,46 +475,36 @@ impl Response {
 }
 
 fn send_resp(mut stream: &UnixStream, resp: Response) -> std::io::Result<()> {
-    let json = serde_json::to_string(&resp).unwrap();
+    let json = serde_json::to_string(&resp).map_err(|e| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, e)
+    })?;
     stream.write_all(json.as_bytes())?;
     stream.write_all(b"\n")?;
     Ok(())
 }
 
-fn socket_path() -> PathBuf {
-    runtime_dir().join("eqtui.sock")
+fn socket_path() -> crate::AppResult<PathBuf> {
+    Ok(runtime_dir()?.join("eqtui.sock"))
 }
 
-fn lock_path() -> PathBuf {
-    runtime_dir().join("eqtui.lock")
+pub fn lock_path() -> crate::AppResult<PathBuf> {
+    Ok(runtime_dir()?.join("eqtui.lock"))
 }
 
-fn runtime_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
-        PathBuf::from(dir)
-    } else {
-        PathBuf::from("/tmp")
+/// Returns the XDG runtime directory for the current user.
+///
+/// This directory is used for the Unix socket and lock file.
+/// Strict requirement for `XDG_RUNTIME_DIR` to be set for security;
+/// falling back to /tmp would allow other local users to intercept
+/// or control the daemon.
+pub fn runtime_dir() -> crate::AppResult<PathBuf> {
+    match std::env::var("XDG_RUNTIME_DIR") {
+        Ok(dir) if !dir.is_empty() => Ok(PathBuf::from(dir)),
+        _ => Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "XDG_RUNTIME_DIR environment variable is not set or is empty. \
+            This is required for secure operation.",
+        )
+        .into()),
     }
-}
-
-fn check_lock_file(path: &PathBuf) -> crate::AppResult<()> {
-    if let Ok(contents) = fs::read_to_string(path) {
-        let pid: i32 = contents.trim().parse().unwrap_or(0);
-        if pid > 0 && pid_alive(pid) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                format!("Daemon already running (PID {pid}). Use `eqtui stop` to stop it first."),
-            )
-            .into());
-        }
-        warn!("Removing stale lock file (PID {pid} is dead)");
-        let _ = fs::remove_file(path);
-    }
-
-    fs::write(path, std::process::id().to_string())?;
-    Ok(())
-}
-
-fn pid_alive(pid: i32) -> bool {
-    std::path::Path::new(&format!("/proc/{pid}")).exists()
 }

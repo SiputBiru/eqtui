@@ -1,6 +1,8 @@
 use std::io;
 use std::sync::Arc;
 
+use daemonize::Daemonize;
+use fs4::fs_std::FileExt;
 use ratatui::backend::CrosstermBackend;
 use tracing_error::ErrorLayer;
 use tracing_subscriber::prelude::*;
@@ -43,7 +45,55 @@ fn main() -> AppResult<()> {
     let mode = args.get(1).map_or("attach", std::string::String::as_str);
 
     match mode {
-        "daemon" => daemon::run(),
+        "daemon" => {
+            let stdout = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_dir.join("eqtui.out"))?;
+
+            let stderr = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_dir.join("eqtui.err"))?;
+
+            let lock_path = daemon::lock_path()?;
+            let lock_file = std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&lock_path)?;
+
+            // Acquire exclusive advisory lock (kernel-level).
+            // This is robust against crashes and prevents multiple instances
+            // from running simultaneously even if a stale PID file exists.
+            if let Err(e) = lock_file.try_lock_exclusive() {
+                eprintln!("Daemon already running. Use `eqtui stop` to stop it first.");
+                tracing::error!(%e, "Failed to acquire daemon lock; another instance might be running");
+                std::process::exit(1);
+            }
+
+            let daemonize = Daemonize::new()
+                .working_directory("/")
+                .stdout(stdout)
+                .stderr(stderr)
+                .privileged_action(move || {
+                    // Returning the lock_file handle for use in the child process
+                    // to write the PID.
+                    lock_file
+                })
+                .umask(0o027); // Restrictive permissions: rwxr-x---
+
+            match daemonize.start() {
+                Ok(lock_file) => {
+                    tracing::info!("Daemonized successfully");
+                    daemon::run(lock_file)
+                }
+                Err(e) => {
+                    eprintln!("Error starting daemon: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
         "stop" => run_cli_stop(),
         "load" => run_cli_load(&args),
         _ => run_tui_attach(),
