@@ -130,14 +130,12 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
             let b = &mut app.eq.bands[app.eq.band_selected];
             b.gain = 0.0;
             b.q = 1.0;
-
         }
         KeyCode::Char('R') => {
             for b in &mut app.eq.bands {
                 b.gain = 0.0;
                 b.q = 1.0;
             }
-
         }
         KeyCode::Char('+' | '=') => {
             if app.eq.bands.is_empty() {
@@ -157,7 +155,6 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
                 }
                 _ => {}
             }
-
         }
         KeyCode::Char('-') => {
             if app.eq.bands.is_empty() {
@@ -177,7 +174,6 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
                 }
                 _ => {}
             }
-
         }
         _ => {}
     }

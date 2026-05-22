@@ -6,8 +6,8 @@ use std::ffi::CString;
 use std::mem;
 use std::os::raw::{c_char, c_void};
 use std::ptr;
-use std::sync::mpsc;
 use std::sync::Arc;
+use std::sync::mpsc;
 
 use pipewire::spa;
 
@@ -66,7 +66,13 @@ pub(crate) unsafe fn process_buffers(
     }
 
     unsafe {
-        pipeline.process(in_l.cast_const(), in_r.cast_const(), out_l, out_r, n_samples);
+        pipeline.process(
+            in_l.cast_const(),
+            in_r.cast_const(),
+            out_l,
+            out_r,
+            n_samples,
+        );
     }
 }
 
@@ -87,7 +93,8 @@ unsafe extern "C" fn process_cb(data: *mut c_void, position: *mut libspa_sys::sp
         let in_left = pipewire_sys::pw_filter_get_dsp_buffer(fd.in_left, n_samples).cast::<f32>();
         let in_right = pipewire_sys::pw_filter_get_dsp_buffer(fd.in_right, n_samples).cast::<f32>();
         let out_left = pipewire_sys::pw_filter_get_dsp_buffer(fd.out_left, n_samples).cast::<f32>();
-        let out_right = pipewire_sys::pw_filter_get_dsp_buffer(fd.out_right, n_samples).cast::<f32>();
+        let out_right =
+            pipewire_sys::pw_filter_get_dsp_buffer(fd.out_right, n_samples).cast::<f32>();
 
         process_buffers(
             &fd.pipeline,
@@ -279,7 +286,8 @@ pub(crate) fn create_eq_filter(
     // to enable discovery and wiring by tools like pw-link.
     // Safety: filter is non-null (checked above). Port pointers are freed
     // by PipeWire when the filter is destroyed.
-    let in_left = unsafe { add_dsp_port(filter, "input_FL", "FL", libspa_sys::SPA_DIRECTION_INPUT) };
+    let in_left =
+        unsafe { add_dsp_port(filter, "input_FL", "FL", libspa_sys::SPA_DIRECTION_INPUT) };
     let in_right =
         unsafe { add_dsp_port(filter, "input_FR", "FR", libspa_sys::SPA_DIRECTION_INPUT) };
     let out_left =
@@ -412,14 +420,16 @@ mod tests {
     #[test]
     fn test_process_buffers_null_checks() {
         let pipeline = Pipeline::new(SAMPLE_RATE);
-        unsafe { process_buffers(
-            &pipeline,
-            ptr::null_mut(),
-            ptr::null_mut(),
-            ptr::null_mut(),
-            ptr::null_mut(),
-            1024,
-        ); };
+        unsafe {
+            process_buffers(
+                &pipeline,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                1024,
+            );
+        };
     }
 
     #[test]
@@ -429,6 +439,8 @@ mod tests {
         // don't need real provenance (using Strict Provenance API).
         let misaligned = ptr::without_provenance_mut::<f32>(0x0123_4567);
         let valid = ptr::without_provenance_mut::<f32>(0x0123_4568);
-        unsafe { process_buffers(&pipeline, misaligned, valid, valid, valid, 1024); };
+        unsafe {
+            process_buffers(&pipeline, misaligned, valid, valid, valid, 1024);
+        };
     }
 }

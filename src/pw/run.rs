@@ -16,9 +16,11 @@ use pipewire::main_loop::MainLoopRc;
 use crate::pipeline::Pipeline;
 use crate::state::{DeviceClass, NodeInfo, PwCommand, PwEvent};
 
-use super::filter::{create_eq_filter, FilterHandle};
-use super::links::{check_null_sink_input_source, create_device_output_links, remove_device_output_links};
-use super::null_sink::{bound_cb, create_null_sink, NullSinkHandle, NullSinkListenerData};
+use super::filter::{FilterHandle, create_eq_filter};
+use super::links::{
+    check_null_sink_input_source, create_device_output_links, remove_device_output_links,
+};
+use super::null_sink::{NullSinkHandle, NullSinkListenerData, bound_cb, create_null_sink};
 
 pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pipeline>) {
     let mainloop = match MainLoopRc::new(None) {

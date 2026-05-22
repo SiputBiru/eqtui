@@ -56,10 +56,11 @@ fn exec(cmd: &str, app: &mut App) {
         }
         Some("preamp") => {
             if let Some(gain_str) = parts.get(1)
-                && let Ok(gain) = gain_str.parse::<f32>() {
-                    app.preamp = gain;
-                    let _ = app.sync_bands();
-                }
+                && let Ok(gain) = gain_str.parse::<f32>()
+            {
+                app.preamp = gain;
+                let _ = app.sync_bands();
+            }
         }
         Some("add") => {
             let freq = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(1000.0);

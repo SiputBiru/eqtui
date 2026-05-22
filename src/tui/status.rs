@@ -144,7 +144,12 @@ pub fn render_hints(app: &App, frame: &mut Frame, area: Rect) {
             spans.extend(vec![
                 Span::from(":").bold(),
                 Span::styled(&app.command_input, Style::default().fg(Color::Yellow)),
-                Span::styled("▌", Style::default().fg(Color::Yellow).add_modifier(Modifier::SLOW_BLINK)),
+                Span::styled(
+                    "▌",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::SLOW_BLINK),
+                ),
             ]);
         }
         Mode::Visual => {}

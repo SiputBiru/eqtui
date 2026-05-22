@@ -71,7 +71,11 @@ pub fn load() -> Vec<Profile> {
                         profile.preamp = preset.preamp;
                     }
                     Err(e) => {
-                        eprintln!("Warning: Failed to load external profile from {}: {}", full_path.display(), e);
+                        eprintln!(
+                            "Warning: Failed to load external profile from {}: {}",
+                            full_path.display(),
+                            e
+                        );
                     }
                 }
             }
@@ -80,7 +84,7 @@ pub fn load() -> Vec<Profile> {
         pf.profiles
     } else {
         let mut defaults = ProfilesFile::default();
-        
+
         // Update profiles from external files if path is set.
         for profile in &mut defaults.profiles {
             if let Some(ref path) = profile.path {
@@ -91,7 +95,11 @@ pub fn load() -> Vec<Profile> {
                         profile.preamp = preset.preamp;
                     }
                     Err(e) => {
-                        eprintln!("Warning: Failed to load external profile from {}: {}", full_path.display(), e);
+                        eprintln!(
+                            "Warning: Failed to load external profile from {}: {}",
+                            full_path.display(),
+                            e
+                        );
                     }
                 }
             }
@@ -127,8 +135,8 @@ fn save_raw(pf: &ProfilesFile, path: &PathBuf) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let contents = toml::to_string_pretty(pf)
-        .unwrap_or_else(|_| String::from("# Failed to serialize\n"));
+    let contents =
+        toml::to_string_pretty(pf).unwrap_or_else(|_| String::from("# Failed to serialize\n"));
     std::fs::write(path, contents)
 }
 
@@ -169,7 +177,11 @@ mod tests {
     #[test]
     fn test_load_with_external_file() {
         let peq_path = std::path::PathBuf::from("test_load.txt");
-        std::fs::write(&peq_path, "Preamp: -5.0 dB\nFilter 1: ON PK Fc 100 Hz Gain 2.0 dB Q 1.0\n").unwrap();
+        std::fs::write(
+            &peq_path,
+            "Preamp: -5.0 dB\nFilter 1: ON PK Fc 100 Hz Gain 2.0 dB Q 1.0\n",
+        )
+        .unwrap();
 
         let mut profile = Profile {
             name: "External".into(),

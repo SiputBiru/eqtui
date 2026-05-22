@@ -13,11 +13,7 @@ use crate::state::FilterType;
 pub fn render(app: &App, frame: &mut Frame, area: Rect) {
     let is_focused = matches!(app.focused_block, FocusedBlock::Pipeline);
 
-    let chunks = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Fill(1),
-    ])
-    .split(area);
+    let chunks = Layout::vertical([Constraint::Length(1), Constraint::Fill(1)]).split(area);
 
     render_tabs(app, frame, chunks[0], is_focused);
     render_table(app, frame, chunks[1], is_focused);

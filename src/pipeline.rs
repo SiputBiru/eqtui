@@ -137,7 +137,15 @@ mod tests {
         let input = vec![0.7_f32; 64];
         let mut lo = vec![0.0_f32; 64];
         let mut ro = vec![0.0_f32; 64];
-        unsafe { p.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len()) };
+        unsafe {
+            p.process(
+                input.as_ptr(),
+                input.as_ptr(),
+                lo.as_mut_ptr(),
+                ro.as_mut_ptr(),
+                input.len(),
+            )
+        };
         assert_eq!(lo, input);
     }
 
@@ -155,7 +163,15 @@ mod tests {
         let input = vec![0.3_f32; 256];
         let mut lo = vec![0.0_f32; 256];
         let mut ro = vec![0.0_f32; 256];
-        unsafe { p.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len()) };
+        unsafe {
+            p.process(
+                input.as_ptr(),
+                input.as_ptr(),
+                lo.as_mut_ptr(),
+                ro.as_mut_ptr(),
+                input.len(),
+            )
+        };
         assert!(lo.iter().all(|s| s.is_finite()));
     }
 
@@ -231,6 +247,10 @@ mod tests {
 
         let max_val = lo.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
         println!("Max output value with preamp: {}", max_val);
-        assert!(max_val <= 1.0, "Expected no clipping (<= 1.0) but got {}", max_val);
+        assert!(
+            max_val <= 1.0,
+            "Expected no clipping (<= 1.0) but got {}",
+            max_val
+        );
     }
 }

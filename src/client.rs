@@ -53,14 +53,12 @@ impl DaemonClient {
         stream.set_read_timeout(timeout)?;
         stream.set_write_timeout(timeout)?;
 
-        let reader = BufReader::new(
-            stream.try_clone().map_err(|e| {
-                std::io::Error::new(
-                    e.kind(),
-                    format!("Failed to clone daemon socket for reading: {e}"),
-                )
-            })?,
-        );
+        let reader = BufReader::new(stream.try_clone().map_err(|e| {
+            std::io::Error::new(
+                e.kind(),
+                format!("Failed to clone daemon socket for reading: {e}"),
+            )
+        })?);
         Ok(Self { stream, reader })
     }
 
@@ -93,13 +91,10 @@ impl DaemonClient {
 
     pub fn get_status(&mut self) -> crate::AppResult<DaemonStatus> {
         let resp = self.request(Request::GetStatus)?;
-        resp.status
-            .ok_or_else(|| {
-                std::io::Error::other(
-                    resp.error.unwrap_or_else(|| "No status in response".into()),
-                )
+        resp.status.ok_or_else(|| {
+            std::io::Error::other(resp.error.unwrap_or_else(|| "No status in response".into()))
                 .into()
-            })
+        })
     }
 
     pub fn set_bands(&mut self, bands: &[EqBand]) -> crate::AppResult<()> {
@@ -139,10 +134,7 @@ fn check_ok(resp: Response) -> crate::AppResult<()> {
     if resp.ok {
         Ok(())
     } else {
-        Err(std::io::Error::other(
-            resp.error.unwrap_or_else(|| "Unknown error".into()),
-        )
-        .into())
+        Err(std::io::Error::other(resp.error.unwrap_or_else(|| "Unknown error".into())).into())
     }
 }
 

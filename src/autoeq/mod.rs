@@ -3,4 +3,4 @@
 
 pub mod parser;
 
-pub use parser::{parse_peq, PeqError, PeqPreset};
+pub use parser::{PeqError, PeqPreset, parse_peq};

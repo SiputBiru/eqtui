@@ -449,7 +449,7 @@ mod tests {
         // 1. Test sync_bands guard
         app.active_profile = 0;
         app.eq.bands = vec![]; // Try to clear bands
-        app.preamp = 5.0;      // Try to change preamp
+        app.preamp = 5.0; // Try to change preamp
         let result = app.sync_bands();
         assert!(result.is_ok());
         // Verify profile 0 was NOT updated

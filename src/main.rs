@@ -110,11 +110,12 @@ fn run_cli_stop() -> AppResult<()> {
 }
 
 fn run_cli_load(args: &[String]) -> AppResult<()> {
-    let path = args
-        .get(2)
-        .ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "Usage: eqtui load <peq_file>")
-        })?;
+    let path = args.get(2).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Usage: eqtui load <peq_file>",
+        )
+    })?;
 
     let preset = parse_peq(std::path::Path::new(path))?;
     let mut client = DaemonClient::connect()?;

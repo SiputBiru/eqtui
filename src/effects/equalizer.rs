@@ -140,7 +140,7 @@ impl EffectPlugin for Equalizer {
                     let mut y = coeffs.b0 * l + coeffs.b1 * s.x1 + coeffs.b2 * s.x2
                         - coeffs.a1 * s.y1
                         - coeffs.a2 * s.y2;
-                    
+
                     // Flush denormals to zero to prevent CPU spikes and audio static
                     if y.abs() < 1.0e-15 {
                         y = 0.0;
@@ -158,7 +158,7 @@ impl EffectPlugin for Equalizer {
                     let mut y = coeffs.b0 * r + coeffs.b1 * s.x1 + coeffs.b2 * s.x2
                         - coeffs.a1 * s.y1
                         - coeffs.a2 * s.y2;
-                    
+
                     // Flush denormals to zero to prevent CPU spikes and audio static
                     if y.abs() < 1.0e-15 {
                         y = 0.0;
@@ -290,7 +290,15 @@ mod tests {
         let input = vec![0.5_f32; 128];
         let mut lo = vec![0.0_f32; 128];
         let mut ro = vec![0.0_f32; 128];
-        unsafe { eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len()) };
+        unsafe {
+            eq.process(
+                input.as_ptr(),
+                input.as_ptr(),
+                lo.as_mut_ptr(),
+                ro.as_mut_ptr(),
+                input.len(),
+            )
+        };
         assert_eq!(lo, input);
         assert_eq!(ro, input);
     }
@@ -301,7 +309,15 @@ mod tests {
         let input = vec![0.5_f32; 128];
         let mut lo = vec![0.0_f32; 128];
         let mut ro = vec![0.0_f32; 128];
-        unsafe { eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len()) };
+        unsafe {
+            eq.process(
+                input.as_ptr(),
+                input.as_ptr(),
+                lo.as_mut_ptr(),
+                ro.as_mut_ptr(),
+                input.len(),
+            )
+        };
         assert_eq!(lo, input);
     }
 
@@ -322,7 +338,15 @@ mod tests {
         let input = vec![0.5_f32; n];
         let mut lo = vec![0.0_f32; n];
         let mut ro = vec![0.0_f32; n];
-        unsafe { eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len()) };
+        unsafe {
+            eq.process(
+                input.as_ptr(),
+                input.as_ptr(),
+                lo.as_mut_ptr(),
+                ro.as_mut_ptr(),
+                input.len(),
+            )
+        };
         assert!((rms(&input) - rms(&lo)).abs() < 0.1);
     }
 
@@ -351,7 +375,15 @@ mod tests {
             .collect();
         let mut lo = vec![0.0_f32; n];
         let mut ro = vec![0.0_f32; n];
-        unsafe { eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len()) };
+        unsafe {
+            eq.process(
+                input.as_ptr(),
+                input.as_ptr(),
+                lo.as_mut_ptr(),
+                ro.as_mut_ptr(),
+                input.len(),
+            )
+        };
         assert!(
             rms(&lo) > rms(&input) * 1.3,
             "expected boost, out_rms={:.3}",
@@ -384,7 +416,15 @@ mod tests {
             .collect();
         let mut lo = vec![0.0_f32; n];
         let mut ro = vec![0.0_f32; n];
-        unsafe { eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len()) };
+        unsafe {
+            eq.process(
+                input.as_ptr(),
+                input.as_ptr(),
+                lo.as_mut_ptr(),
+                ro.as_mut_ptr(),
+                input.len(),
+            )
+        };
         assert!(
             rms(&lo) < rms(&input) * 0.7,
             "expected cut, out_rms={:.3}",
@@ -420,7 +460,15 @@ mod tests {
         let input = vec![0.3_f32; n];
         let mut lo = vec![0.0_f32; n];
         let mut ro = vec![0.0_f32; n];
-        unsafe { eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len()) };
+        unsafe {
+            eq.process(
+                input.as_ptr(),
+                input.as_ptr(),
+                lo.as_mut_ptr(),
+                ro.as_mut_ptr(),
+                input.len(),
+            )
+        };
         // Output should exist and not panic
         assert!(lo.iter().all(|s| s.is_finite()));
     }
@@ -450,7 +498,15 @@ mod tests {
             .collect();
         let mut lo = vec![0.0_f32; n];
         let mut ro = vec![0.0_f32; n];
-        unsafe { eq.process(input.as_ptr(), input.as_ptr(), lo.as_mut_ptr(), ro.as_mut_ptr(), input.len()) };
+        unsafe {
+            eq.process(
+                input.as_ptr(),
+                input.as_ptr(),
+                lo.as_mut_ptr(),
+                ro.as_mut_ptr(),
+                input.len(),
+            )
+        };
         assert!(
             rms(&lo) > 1.3,
             "low shelf should boost bass, got {:.3}",

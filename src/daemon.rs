@@ -13,8 +13,9 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::{
+    Arc, Mutex,
     atomic::{AtomicBool, Ordering},
-    mpsc, Arc, Mutex,
+    mpsc,
 };
 use std::thread;
 use std::time::Duration;
@@ -109,9 +110,7 @@ impl DaemonState {
             }
             PwEvent::FilterReady { node_id } => {
                 *self.filter_node_id.lock().unwrap() = Some(*node_id);
-                self.push_event(PushEvent::FilterReady {
-                    node_id: *node_id,
-                });
+                self.push_event(PushEvent::FilterReady { node_id: *node_id });
             }
             PwEvent::NullSinkCreated { module_id } => {
                 *self.null_sink.lock().unwrap() = NullSinkState::Loaded {
@@ -214,11 +213,9 @@ pub fn run(mut lock_file: std::fs::File) -> crate::AppResult<()> {
     let (cmd_tx, cmd_rx) = channel::channel::<PwCommand>();
 
     let pw_pipeline = pipeline.clone();
-    let pw_thread = thread::Builder::new()
-        .name("pw".into())
-        .spawn(move || {
-            pw::run(pw_tx, cmd_rx, pw_pipeline);
-        })?;
+    let pw_thread = thread::Builder::new().name("pw".into()).spawn(move || {
+        pw::run(pw_tx, cmd_rx, pw_pipeline);
+    })?;
 
     let bridge_state = state.clone();
     let bridge_socket = socket_path.clone();
@@ -285,7 +282,10 @@ pub fn run(mut lock_file: std::fs::File) -> crate::AppResult<()> {
                     limit = MAX_CLIENTS,
                     "Maximum concurrent clients reached; dropping connection"
                 );
-                let _ = send_resp(&stream, Response::error("Maximum concurrent clients reached"));
+                let _ = send_resp(
+                    &stream,
+                    Response::error("Maximum concurrent clients reached"),
+                );
                 continue;
             }
         }
@@ -333,9 +333,7 @@ fn handle_client(
     if peer_uid != my_uid {
         warn!(
             client_id,
-            peer_uid,
-            my_uid,
-            "Unauthorized connection attempt from different UID; rejecting"
+            peer_uid, my_uid, "Unauthorized connection attempt from different UID; rejecting"
         );
         return;
     }
@@ -413,10 +411,7 @@ fn dispatch_request(
                 return Response::error("Filter not ready yet");
             };
             state.connected_devices.lock().unwrap().push(node_id);
-            let _ = cmd_tx.send(PwCommand::ConnectDevice {
-                filter_id,
-                node_id,
-            });
+            let _ = cmd_tx.send(PwCommand::ConnectDevice { filter_id, node_id });
             info!(node_id, "Device connected");
             Response::ok()
         }
@@ -430,10 +425,7 @@ fn dispatch_request(
                 .lock()
                 .unwrap()
                 .retain(|id| *id != node_id);
-            let _ = cmd_tx.send(PwCommand::DisconnectDevice {
-                filter_id,
-                node_id,
-            });
+            let _ = cmd_tx.send(PwCommand::DisconnectDevice { filter_id, node_id });
             info!(node_id, "Device disconnected");
             Response::ok()
         }
@@ -478,9 +470,8 @@ impl Response {
 }
 
 fn send_resp(mut stream: &UnixStream, resp: Response) -> std::io::Result<()> {
-    let json = serde_json::to_string(&resp).map_err(|e| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, e)
-    })?;
+    let json = serde_json::to_string(&resp)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     stream.write_all(json.as_bytes())?;
     stream.write_all(b"\n")?;
     Ok(())

@@ -50,7 +50,6 @@ pub fn handle(key: KeyEvent, app: &mut App) {
                     }
                     _ => {}
                 }
-
             }
             app.mode = Mode::Normal;
         }
