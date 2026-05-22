@@ -429,6 +429,3 @@ mod tests {
         unsafe { process_buffers(&pipeline, misaligned, valid, valid, valid, 1024); };
     }
 }
-
-    }
-}

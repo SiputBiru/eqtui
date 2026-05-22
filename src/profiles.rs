@@ -13,6 +13,8 @@ pub struct Profile {
     pub bands: Vec<EqBand>,
     #[serde(default)]
     pub preamp: f32,
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,6 +30,7 @@ impl Default for ProfilesFile {
                     name: format!("Profile {i}"),
                     bands: Vec::new(),
                     preamp: 0.0,
+                    path: None,
                 })
                 .collect(),
         }
@@ -49,14 +52,64 @@ pub fn load() -> Vec<Profile> {
                 name: format!("Profile {}", pf.profiles.len() + 1),
                 bands: Vec::new(),
                 preamp: 0.0,
+                path: None,
             });
         }
         pf.profiles.truncate(PROFILE_COUNT);
+
+        // Update profiles from external files if path is set.
+        // This ensures profiles linked to files are always up-to-date on load.
+        for profile in &mut pf.profiles {
+            if let Some(ref path) = profile.path {
+                let full_path = resolve_path(path);
+                match crate::autoeq::parse_peq(&full_path) {
+                    Ok(preset) => {
+                        profile.bands = preset.bands;
+                        profile.preamp = preset.preamp;
+                    }
+                    Err(e) => {
+                        eprintln!("Warning: Failed to load external profile from {}: {}", full_path.display(), e);
+                    }
+                }
+            }
+        }
+
         pf.profiles
     } else {
-        let defaults = ProfilesFile::default();
+        let mut defaults = ProfilesFile::default();
+        
+        // Update profiles from external files if path is set.
+        for profile in &mut defaults.profiles {
+            if let Some(ref path) = profile.path {
+                let full_path = resolve_path(path);
+                match crate::autoeq::parse_peq(&full_path) {
+                    Ok(preset) => {
+                        profile.bands = preset.bands;
+                        profile.preamp = preset.preamp;
+                    }
+                    Err(e) => {
+                        eprintln!("Warning: Failed to load external profile from {}: {}", full_path.display(), e);
+                    }
+                }
+            }
+        }
+
         let _ = save_raw(&defaults, &path);
         defaults.profiles
+    }
+}
+
+/// Resolves a profile path, supporting the `@` prefix for portability.
+///
+/// If a path starts with `@`, it is resolved relative to the directory
+/// containing the profiles.toml file (usually ~/.config/eqtui/).
+pub fn resolve_path(path: &str) -> PathBuf {
+    if let Some(stripped) = path.strip_prefix('@') {
+        let mut base = profiles_path();
+        base.pop(); // Remove "profiles.toml"
+        base.join(stripped)
+    } else {
+        PathBuf::from(path)
     }
 }
 
@@ -81,4 +134,57 @@ fn profiles_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
         .join("eqtui")
         .join("profiles.toml")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_profile_deserialization_with_path() {
+        let toml_str = r#"
+            name = "Test Profile"
+            path = "@/path/to/profile.txt"
+            bands = []
+            preamp = 0.0
+        "#;
+        let profile: Profile = toml::from_str(toml_str).unwrap();
+        assert_eq!(profile.path, Some("@/path/to/profile.txt".to_string()));
+    }
+
+    #[test]
+    fn test_profile_deserialization_without_path() {
+        let toml_str = r#"
+            name = "Test Profile"
+            bands = []
+            preamp = 0.0
+        "#;
+        let profile: Profile = toml::from_str(toml_str).unwrap();
+        assert_eq!(profile.path, None);
+    }
+
+    #[test]
+    fn test_load_with_external_file() {
+        let peq_path = std::path::PathBuf::from("test_load.txt");
+        std::fs::write(&peq_path, "Preamp: -5.0 dB\nFilter 1: ON PK Fc 100 Hz Gain 2.0 dB Q 1.0\n").unwrap();
+
+        let mut profile = Profile {
+            name: "External".into(),
+            bands: vec![],
+            preamp: 0.0,
+            path: Some(peq_path.to_str().unwrap().to_string()),
+        };
+
+        // Mock the logic inside load()
+        let full_path = resolve_path(profile.path.as_ref().unwrap());
+        let preset = crate::autoeq::parse_peq(&full_path).unwrap();
+        profile.bands = preset.bands;
+        profile.preamp = preset.preamp;
+
+        std::fs::remove_file(&peq_path).unwrap();
+
+        assert_eq!(profile.preamp, -5.0);
+        assert_eq!(profile.bands.len(), 1);
+        assert_eq!(profile.bands[0].frequency, 100.0);
+    }
 }

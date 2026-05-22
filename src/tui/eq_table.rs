@@ -26,7 +26,12 @@ fn render_tabs(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
         .iter()
         .enumerate()
         .flat_map(|(i, p)| {
-            let name = format!(" {p} ", p = p.name);
+            // Append [RO] if the profile has an external path (read-only)
+            let name = if p.path.is_some() {
+                format!(" {} [RO] ", p.name)
+            } else {
+                format!(" {} ", p.name)
+            };
             let style = if i == app.active_profile {
                 Style::default()
                     .fg(Color::Black)

@@ -233,6 +233,14 @@ impl App {
     }
 
     pub fn sync_bands(&mut self) -> AppResult<()> {
+        if let Some(p) = self.profiles.get(self.active_profile) {
+            // Prevent accidental modification of external profiles
+            if p.path.is_some() {
+                self.notify("Cannot save: Profile is read-only (linked to file)");
+                return Ok(());
+            }
+        }
+
         if let Some(client) = &mut self.client {
             client.set_bands(&self.eq.bands)?;
             client.set_preamp(self.preamp)?;
@@ -280,8 +288,11 @@ impl App {
         }
 
         if let Some(p) = self.profiles.get_mut(self.active_profile) {
-            p.bands.clone_from(&self.eq.bands);
-            p.preamp = self.preamp;
+            // Only update memory state if not linked to an external file
+            if p.path.is_none() {
+                p.bands.clone_from(&self.eq.bands);
+                p.preamp = self.preamp;
+            }
         }
         #[allow(clippy::cast_possible_wrap)]
         let idx = (self.active_profile as isize + dir).rem_euclid(count) as usize;
@@ -336,6 +347,7 @@ impl App {
                 name: "Test".into(),
                 bands: vec![],
                 preamp: 0.0,
+                path: None,
             }],
             active_profile: 0,
             last_key: None,
@@ -389,6 +401,7 @@ mod tests {
             name: "Profile 2".into(),
             bands: vec![],
             preamp: 0.0,
+            path: None,
         });
 
         // Setup profile 2 with different bands
@@ -404,5 +417,56 @@ mod tests {
         assert_eq!(app.active_profile, 1);
         assert_eq!(app.eq.bands.len(), 1);
         assert!((app.eq.bands[0].frequency - 500.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn test_read_only_profile_guard() {
+        let config = std::sync::Arc::new(crate::config::Config::default());
+        let mut app = App::new_test(config);
+
+        // Profile 0: Read-only (linked to file)
+        app.profiles[0].path = Some("some_path.txt".into());
+        app.profiles[0].preamp = -1.0;
+        app.profiles[0].bands = vec![crate::state::EqBand {
+            frequency: 100.0,
+            gain: 0.0,
+            q: 1.0,
+            filter_type: crate::state::FilterType::Peak,
+        }];
+
+        // Profile 1: Normal
+        app.profiles.push(crate::profiles::Profile {
+            name: "Normal".into(),
+            bands: vec![],
+            preamp: 0.0,
+            path: None,
+        });
+
+        // 1. Test sync_bands guard
+        app.active_profile = 0;
+        app.eq.bands = vec![]; // Try to clear bands
+        app.preamp = 5.0;      // Try to change preamp
+        let result = app.sync_bands();
+        assert!(result.is_ok());
+        // Verify profile 0 was NOT updated
+        assert_eq!(app.profiles[0].preamp, -1.0);
+        assert_eq!(app.profiles[0].bands.len(), 1);
+
+        // 2. Test switch_profile guard
+        // Switch from 0 to 1
+        app.switch_profile(1);
+        assert_eq!(app.active_profile, 1);
+        // Verify profile 0 was NOT updated when switching away
+        assert_eq!(app.profiles[0].preamp, -1.0);
+        assert_eq!(app.profiles[0].bands.len(), 1);
+
+        // Modify something in profile 1
+        app.preamp = 2.0;
+        // Switch from 1 back to 0
+        app.switch_profile(-1);
+        assert_eq!(app.active_profile, 0);
+        // Verify profile 1 WAS updated when switching away
+        assert_eq!(app.profiles[1].preamp, 2.0);
     }
 }
