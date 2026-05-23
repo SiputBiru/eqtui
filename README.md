@@ -5,9 +5,11 @@
 A keyboard-driven parametric EQ for PipeWire that lives in the terminal.
 Built with [Ratatui](https://ratatui.rs).
 
+<img src="./imgs/theviewofthetui.png" width="640" alt="idontknowwhattocallforthis">
+
 [EasyEffects](https://github.com/wwmm/easyeffects) is great, but sometimes I just
-want a simple EQ — not a full DSP pipeline with a GTK(now Qt) UI. And also
-i want to learn little bit about DSP stuff.
+want a simple EQ — not a full DSP pipeline with a GTK or Qt UI.
+And also i just want to learn little bit about DSP stuff.
 
 Runs as a background daemon so the EQ keeps going even after closing the TUI.
 
