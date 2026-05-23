@@ -90,7 +90,6 @@ Close with `q` — the EQ keeps running. Re-attach anytime with `eqtui attach`.
 - **AutoEQ import** — `:load` any PEQ file from AutoEQ / Squiglink
 - **Profile system** — save/switch presets with `:w`
 - **Vim-ish controls** — Normal/Insert/Visual/Command modes
-- **No GTK, no Qt** — just a terminal and PipeWire
 
 ## Config & Profiles
 
@@ -196,6 +195,12 @@ cargo build --release
 ```
 
 Needs PipeWire and a Nerd Font.
+
+## Known Issues
+
+- **Frequency Response Graph (Right Panel):** Still a work-in-progress.
+  Currently renders a static placeholder target curve (PEQdB Diamond β).
+  The actual EQ transfer function overlay is not yet implemented.
 
 ---
 
