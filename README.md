@@ -179,12 +179,13 @@ cancel = '\x1b'
 
 ## Background Process Details
 
-The daemon uses a few standard Linux mechanisms to work correctly:
+The daemon employs standard Linux mechanisms for lifecycle management and security:
 
-- **XDG_RUNTIME_DIR:** The Unix socket is placed here. The daemon will not start if this variable is missing.
-- **User Check:** The daemon only accepts connections from the same user ID that started it.
-- **File Locking:** Uses a lock file to make sure only one daemon instance runs at a time.
-- **POSIX Daemon:** Uses standard `fork` and `setsid` to detach from the terminal.
+- **XDG_RUNTIME_DIR:** The Unix socket and lock file are placed here to ensure they are isolated to the current user's session and automatically cleaned up on logout.
+- **User Integrity:** The daemon only accepts connections from the same user ID that initiated the process.
+- **Exclusive Advisory Locking:** An advisory lock (`flock`) on a dedicated file ensures only one daemon instance runs at a time. This method is robust against stale lock files from previous crashes.
+- **Specialized POSIX Daemonization:** A custom double-fork procedure detaches the process from the controlling terminal. This prevents the daemon from unintentionally re-acquiring a terminal and ensures it continues running as a background service.
+- **FD Security:** File descriptors for logs and the lock file are opened with `O_CLOEXEC` to prevent accidental inheritance by child processes (e.g., when spawning `pw-link`).
 
 ## Install from Source
 

@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 use std::io;
+use std::os::unix::fs::OpenOptionsExt;
 use std::sync::Arc;
 
-use daemonize::Daemonize;
 use ratatui::backend::CrosstermBackend;
 use tracing_error::ErrorLayer;
 use tracing_subscriber::prelude::*;
@@ -63,6 +63,7 @@ fn main() -> AppResult<()> {
                 .create(true)
                 .write(true)
                 .truncate(true)
+                .custom_flags(libc::O_CLOEXEC)
                 .open(&lock_path)?;
 
             // Acquire exclusive advisory lock (kernel-level).
@@ -74,27 +75,12 @@ fn main() -> AppResult<()> {
                 std::process::exit(1);
             }
 
-            let daemonize = Daemonize::new()
-                .working_directory("/")
-                .stdout(stdout)
-                .stderr(stderr)
-                .privileged_action(move || {
-                    // Returning the lock_file handle for use in the child process
-                    // to write the PID.
-                    lock_file
-                })
-                .umask(0o027); // Restrictive permissions: rwxr-x---
-
-            match daemonize.start() {
-                Ok(lock_file) => {
-                    tracing::info!("Daemonized successfully");
-                    daemon::run(lock_file)
-                }
-                Err(e) => {
-                    eprintln!("Error starting daemon: {e}");
-                    std::process::exit(1);
-                }
+            if let Err(e) = daemon::init(stdout, stderr, lock_file.try_clone()?) {
+                eprintln!("Error starting daemon: {e}");
+                std::process::exit(1);
             }
+            tracing::info!("Daemonized successfully");
+            daemon::run(lock_file)
         }
         "stop" => run_cli_stop(),
         "load" => run_cli_load(&args),

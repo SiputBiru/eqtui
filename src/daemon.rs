@@ -10,6 +10,7 @@
 
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
+use std::os::unix::io::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::{
@@ -20,11 +21,16 @@ use std::sync::{
 use std::thread;
 use std::time::Duration;
 
+use libc::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
 use pipewire::channel;
 use tracing::{error, info, warn};
 use uds::UnixStreamExt;
 
 use crate::pipeline::{Pipeline, SAMPLE_RATE};
+
+// Constants for standard stream redirection and file modes.
+const DEV_NULL: *const libc::c_char = c"/dev/null".as_ptr();
+
 use crate::protocol::{DaemonStatus, PushEvent, Request, Response};
 use crate::pw;
 use crate::state::{EqBand, FilterState, NodeInfo, NullSinkState, PwCommand, PwEvent};
@@ -193,6 +199,70 @@ impl DaemonState {
         };
         clients.retain(|c| c.tx.send(json.clone()).is_ok());
     }
+}
+
+/// Initializes the process as a daemon using the standard double-fork procedure.
+///
+/// A double fork prevents the daemon from ever re-acquiring a controlling terminal,
+/// which is a requirement for background services on POSIX systems.
+pub fn init(
+    stdout: std::fs::File,
+    stderr: std::fs::File,
+    lock_file: std::fs::File,
+) -> crate::AppResult<()> {
+    unsafe {
+        // First fork to detach from the parent process.
+        let pid = libc::fork();
+        if pid < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        if pid > 0 {
+            libc::_exit(0);
+        }
+
+        // Create a new session to become the session leader.
+        if libc::setsid() < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+
+        // Second fork to ensure the process is not a session leader and cannot acquire a terminal.
+        let pid = libc::fork();
+        if pid < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        if pid > 0 {
+            libc::_exit(0);
+        }
+
+        // Set the working directory to root to avoid pinning mount points.
+        libc::chdir(c"/".as_ptr());
+
+        // Set restrictive file permissions for new files.
+        libc::umask(0o027);
+
+        // Redirect standard input to /dev/null.
+        let fd = libc::open(DEV_NULL, libc::O_RDONLY);
+        if fd != -1 {
+            libc::dup2(fd, STDIN_FILENO);
+            libc::close(fd);
+        }
+
+        // Redirect stdout and stderr to the provided log files.
+        libc::dup2(stdout.as_raw_fd(), STDOUT_FILENO);
+        libc::dup2(stderr.as_raw_fd(), STDERR_FILENO);
+    }
+
+    // Write the final PID to the lock file for process management.
+    let pid = std::process::id().to_string();
+    let mut f = lock_file;
+    use std::io::{Seek, SeekFrom, Write};
+    f.set_len(0)?;
+    f.seek(SeekFrom::Start(0))?;
+    f.write_all(pid.as_bytes())?;
+    f.flush()?;
+    f.sync_all()?;
+
+    Ok(())
 }
 
 pub fn run(mut lock_file: std::fs::File) -> crate::AppResult<()> {
