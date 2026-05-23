@@ -30,12 +30,15 @@ fn handle_devices(key: KeyEvent, app: &mut App) {
                 .unwrap_or(app.nodes.len() - 1);
         }
         KeyCode::Char('c' | 'C') if !app.nodes.is_empty() => {
-            let target_node = &app.nodes[app.nodes_selected];
-            // Skip if it's the eqtui null sink itself (can't route eqtui → eqtui)
-            if target_node.description.contains("eqtui") {
+            let target_id = app.nodes[app.nodes_selected].id;
+            // Reject connecting the null sink (or filter) to itself —
+            // would create an audio feedback loop.
+            if app.null_sink.module_id() == Some(target_id) || app.filter_node_id == Some(target_id)
+            {
+                app.notify("Rejected: connecting null-sink or filter to itself would create a feedback loop");
                 return;
             }
-            if let Err(e) = app.toggle_device_connection(target_node.id) {
+            if let Err(e) = app.toggle_device_connection(target_id) {
                 tracing::error!(%e, "Failed to toggle device connection");
             }
         }
@@ -390,15 +393,20 @@ mod tests {
     }
 
     #[test]
-    fn test_handle_devices_connect_skips_eqtui() {
+    fn test_handle_devices_connect_skips_null_sink() {
         let config = Arc::new(Config::default());
         let mut app = App::new_test(config);
         app.focused_block = FocusedBlock::Devices;
         app.filter_node_id = Some(42);
+        // Simulate the null sink with a known PipeWire node ID.
+        app.null_sink = crate::state::NullSinkState::Loaded {
+            module_id: 99,
+            has_source: false,
+        };
         app.nodes.push(crate::state::NodeInfo {
             id: 99,
-            name: "eqtui Equalizer".to_string(),
-            description: "eqtui Equalizer".to_string(),
+            name: "eqtui".to_string(),
+            description: "eqtui (Virtual Sink)".to_string(),
             class: crate::state::DeviceClass::Speaker,
         });
         app.nodes_selected = 0;
@@ -407,7 +415,7 @@ mod tests {
             KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
             &mut app,
         );
-        // Should skip because it's the eqtui null sink
+        // Should skip because the target node matches the null sink ID.
         assert!(app.connected_devices.is_empty());
     }
 

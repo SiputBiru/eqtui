@@ -482,6 +482,18 @@ fn dispatch_request(
             let Some(filter_id) = *state.filter_node_id.lock().unwrap() else {
                 return Response::error("Filter not ready yet");
             };
+            // Reject connecting the filter to itself or to the null sink —
+            // both would create an audio feedback loop.
+            if node_id == filter_id {
+                return Response::error("Cannot connect filter to itself");
+            }
+            if let Some(ns_id) = state.null_sink.lock().unwrap().module_id()
+                && node_id == ns_id
+            {
+                return Response::error(
+                    "Cannot connect to the null sink (would create a feedback loop)",
+                );
+            }
             state.connected_devices.lock().unwrap().push(node_id);
             let _ = cmd_tx.send(PwCommand::ConnectDevice { filter_id, node_id });
             info!(node_id, "Device connected");
