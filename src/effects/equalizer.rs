@@ -297,8 +297,8 @@ mod tests {
                 lo.as_mut_ptr(),
                 ro.as_mut_ptr(),
                 input.len(),
-            )
-        };
+            );
+        }
         assert_eq!(lo, input);
         assert_eq!(ro, input);
     }
@@ -316,8 +316,8 @@ mod tests {
                 lo.as_mut_ptr(),
                 ro.as_mut_ptr(),
                 input.len(),
-            )
-        };
+            );
+        }
         assert_eq!(lo, input);
     }
 
@@ -345,8 +345,8 @@ mod tests {
                 lo.as_mut_ptr(),
                 ro.as_mut_ptr(),
                 input.len(),
-            )
-        };
+            );
+        }
         assert!((rms(&input) - rms(&lo)).abs() < 0.1);
     }
 
@@ -382,8 +382,8 @@ mod tests {
                 lo.as_mut_ptr(),
                 ro.as_mut_ptr(),
                 input.len(),
-            )
-        };
+            );
+        }
         assert!(
             rms(&lo) > rms(&input) * 1.3,
             "expected boost, out_rms={:.3}",
@@ -423,8 +423,8 @@ mod tests {
                 lo.as_mut_ptr(),
                 ro.as_mut_ptr(),
                 input.len(),
-            )
-        };
+            );
+        }
         assert!(
             rms(&lo) < rms(&input) * 0.7,
             "expected cut, out_rms={:.3}",
@@ -467,8 +467,8 @@ mod tests {
                 lo.as_mut_ptr(),
                 ro.as_mut_ptr(),
                 input.len(),
-            )
-        };
+            );
+        }
         // Output should exist and not panic
         assert!(lo.iter().all(|s| s.is_finite()));
     }
@@ -505,8 +505,8 @@ mod tests {
                 lo.as_mut_ptr(),
                 ro.as_mut_ptr(),
                 input.len(),
-            )
-        };
+            );
+        }
         assert!(
             rms(&lo) > 1.3,
             "low shelf should boost bass, got {:.3}",

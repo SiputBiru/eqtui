@@ -198,8 +198,14 @@ mod tests {
 
         std::fs::remove_file(&peq_path).unwrap();
 
-        assert_eq!(profile.preamp, -5.0);
+        assert!(
+            (profile.preamp - (-5.0)).abs() < f32::EPSILON,
+            "preamp mismatch"
+        );
         assert_eq!(profile.bands.len(), 1);
-        assert_eq!(profile.bands[0].frequency, 100.0);
+        assert!(
+            (profile.bands[0].frequency - 100.0).abs() < f32::EPSILON,
+            "frequency mismatch"
+        );
     }
 }

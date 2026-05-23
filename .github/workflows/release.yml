@@ -25,8 +25,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libpipewire-0.3-dev libspa-0.2-dev
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust 1.89.0
+        uses: dtolnay/rust-toolchain@1.89.0
 
       - name: Build release binary
         run: cargo build --release

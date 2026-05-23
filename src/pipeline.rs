@@ -144,8 +144,8 @@ mod tests {
                 lo.as_mut_ptr(),
                 ro.as_mut_ptr(),
                 input.len(),
-            )
-        };
+            );
+        }
         assert_eq!(lo, input);
     }
 
@@ -170,8 +170,8 @@ mod tests {
                 lo.as_mut_ptr(),
                 ro.as_mut_ptr(),
                 input.len(),
-            )
-        };
+            );
+        }
         assert!(lo.iter().all(|s| s.is_finite()));
     }
 

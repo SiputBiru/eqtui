@@ -1,6 +1,7 @@
 // Copyright (C) 2026 SiputBiru <hillsforrest03@gmail.com>
 // SPDX-License-Identifier: GPL-2.0-only
 
+use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
@@ -15,6 +16,9 @@ use crate::state::EqBand;
 pub struct DaemonClient {
     stream: UnixStream,
     reader: BufReader<UnixStream>,
+    /// Push events that arrived during a synchronous `request()` call
+    /// are buffered here and drained by `try_read_event()`.
+    pending_events: VecDeque<PushEvent>,
 }
 
 impl DaemonClient {
@@ -64,7 +68,11 @@ impl DaemonClient {
                 format!("Failed to clone daemon socket for reading: {e}"),
             )
         })?);
-        Ok(Self { stream, reader })
+        Ok(Self {
+            stream,
+            reader,
+            pending_events: VecDeque::new(),
+        })
     }
 
     pub fn request(&mut self, req: Request) -> crate::AppResult<Response> {
@@ -73,20 +81,53 @@ impl DaemonClient {
         self.stream.write_all(b"\n")?;
         self.stream.flush()?;
 
-        let mut line = String::new();
-        self.reader.read_line(&mut line)?;
-        Ok(serde_json::from_str(line.trim())?)
+        // Loop until a Response arrives.  Push events that arrive before
+        // the response are buffered and returned by try_read_event().
+        loop {
+            let mut line = String::new();
+            self.reader.read_line(&mut line)?;
+
+            // Try Response first — it has { ok, error, status }.
+            if let Ok(resp) = serde_json::from_str::<Response>(line.trim()) {
+                return Ok(resp);
+            }
+
+            // PushEvents use #[serde(tag = "event")] → { "event": "...", ... }.
+            if let Ok(event) = serde_json::from_str::<PushEvent>(line.trim()) {
+                self.pending_events.push_back(event);
+                continue;
+            }
+
+            // Neither variant matched — likely a protocol error or corrupted data.
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Unexpected data from daemon: {}", line.trim()),
+            )
+            .into());
+        }
     }
 
     /// Returns `None` when no push events are available.
     pub fn try_read_event(&mut self) -> std::io::Result<Option<PushEvent>> {
+        // Drain events that were buffered during a synchronous request()
+        // before hitting the socket.  This ensures they are processed in
+        // order on the next drain_events() cycle.
+        if let Some(event) = self.pending_events.pop_front() {
+            return Ok(Some(event));
+        }
+
         self.reader.get_mut().set_nonblocking(true)?;
         let mut line = String::new();
         let result = match self.reader.read_line(&mut line) {
             Ok(0) => Ok(None),
-            Ok(_) => serde_json::from_str(line.trim())
-                .map(Some)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
+            Ok(_) => match serde_json::from_str::<PushEvent>(line.trim()) {
+                Ok(event) => Ok(Some(event)),
+                // A stray Response or other non-PushEvent data arrived.
+                // This shouldn't happen in normal operation (request()
+                // always consumes the expected response), but if it does,
+                // silently discard it rather than crashing the TUI.
+                Err(_) => Ok(None),
+            },
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
             Err(e) => Err(e),
         };

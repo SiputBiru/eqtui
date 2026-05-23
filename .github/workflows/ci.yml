@@ -24,8 +24,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust 1.89.0
+        uses: dtolnay/rust-toolchain@1.89.0
         with:
           components: rustfmt
       - name: check formatting
@@ -45,8 +45,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libpipewire-0.3-dev libspa-0.2-dev
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust 1.89.0
+        uses: dtolnay/rust-toolchain@1.89.0
         with:
           components: clippy
       - name: Run clippy action
@@ -80,8 +80,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libpipewire-0.3-dev libspa-0.2-dev
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust 1.89.0
+        uses: dtolnay/rust-toolchain@1.89.0
       - name: cargo generate-lockfile
         if: hashFiles('Cargo.lock') == ''
         run: cargo generate-lockfile
