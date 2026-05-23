@@ -14,7 +14,8 @@ Runs as a background daemon so the EQ keeps going even after closing the TUI.
 ## Quick Start
 
 ```bash
-cargo install eqtui
+cargo install eqtui --version 0.1.1-alpha.x # cause its still alpha 
+# we still need to add specific version to make it working
 eqtui daemon    # start the engine (background)
 eqtui           # open the TUI
 eqtui stop      # stop the daemon
