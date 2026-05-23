@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.1.1). Defaults to version from Cargo.toml.'
+        required: false
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpipewire-0.3-dev libspa-0.2-dev
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Determine tag
+        id: tag
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            echo "value=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            VERSION=v$(grep '^version =' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+            echo "value=${VERSION}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create release archive
+        run: |
+          mkdir -p release
+          cp target/release/eqtui README.md LICENSE release/
+          tar czf "eqtui-${{ steps.tag.outputs.value }}.tar.gz" -C release .
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.value }}
+          files: "eqtui-${{ steps.tag.outputs.value }}.tar.gz"
+          generate_release_notes: true

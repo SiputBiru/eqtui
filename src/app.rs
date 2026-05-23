@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use tui_input::Input;
 
@@ -76,9 +77,9 @@ pub struct App {
     pub command_input: Input,
     pub last_key: Option<char>,
 
-    /// Transient status message with remaining tick count.
-    /// Cleared automatically when the counter reaches zero.
-    pub notification: Option<(String, usize)>,
+    /// Transient status message with deadline instant.
+    /// Cleared automatically when the deadline passes.
+    pub notification: Option<(String, Instant)>,
 
     /// Wrapped in `Option` so unit tests can exist without a daemon.
     client: Option<DaemonClient>,
@@ -193,11 +194,10 @@ impl App {
     }
 
     pub fn tick(&mut self) {
-        if let Some((_, ttl)) = &mut self.notification {
-            *ttl = ttl.saturating_sub(1);
-            if *ttl == 0 {
-                self.notification = None;
-            }
+        if let Some((_, deadline)) = &self.notification
+            && Instant::now() >= *deadline
+        {
+            self.notification = None;
         }
 
         let mut new_l = 20.0 * (self.cached_peak_l + 1e-7).log10();
@@ -232,7 +232,7 @@ impl App {
     }
 
     pub fn notify(&mut self, msg: impl Into<String>) {
-        self.notification = Some((msg.into(), 90)); // ~3 seconds at 30fps
+        self.notification = Some((msg.into(), Instant::now() + Duration::from_secs(3)));
     }
 
     pub fn sync_bands(&mut self) -> AppResult<()> {

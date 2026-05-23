@@ -30,7 +30,12 @@ impl DaemonClient {
         info!("No daemon found — auto-launching");
         spawn_daemon();
 
-        for _ in 0..30 {
+        let timeout_ms = std::env::var("EQTUI_DAEMON_START_TIMEOUT_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(3000);
+        let attempts = (timeout_ms / 100).max(1);
+        for _ in 0..attempts {
             std::thread::sleep(Duration::from_millis(100));
             if let Ok(client) = Self::try_connect(&path) {
                 info!("Connected to auto-launched daemon");
@@ -40,7 +45,7 @@ impl DaemonClient {
 
         Err(std::io::Error::new(
             std::io::ErrorKind::ConnectionRefused,
-            "Daemon failed to start within 3 seconds",
+            format!("Daemon failed to start within {timeout_ms}ms"),
         )
         .into())
     }

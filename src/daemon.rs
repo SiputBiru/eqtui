@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use libc::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
 use pipewire::channel;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use uds::UnixStreamExt;
 
 use crate::pipeline::{Pipeline, SAMPLE_RATE};
@@ -301,7 +301,9 @@ pub fn run(mut lock_file: std::fs::File) -> crate::AppResult<()> {
                 error!("PW event channel closed unexpectedly — shutting down daemon");
                 bridge_state.shutting_down.store(true, Ordering::Relaxed);
                 // Unblock the accept loop so the daemon can exit on unexpected PW death.
-                let _ = std::os::unix::net::UnixStream::connect(&bridge_socket);
+                if let Err(e) = std::os::unix::net::UnixStream::connect(&bridge_socket) {
+                    debug!(%e, "Failed to connect to socket to unblock accept loop");
+                }
             }
         })?;
 
