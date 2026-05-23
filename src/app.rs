@@ -290,13 +290,6 @@ impl App {
             return;
         }
 
-        if let Some(p) = self.profiles.get_mut(self.active_profile) {
-            // Only update memory state if not linked to an external file
-            if p.path.is_none() {
-                p.bands.clone_from(&self.eq.bands);
-                p.preamp = self.preamp;
-            }
-        }
         #[allow(clippy::cast_possible_wrap)]
         let idx = (self.active_profile as isize + dir).rem_euclid(count) as usize;
 
@@ -469,7 +462,8 @@ mod tests {
         // Switch from 1 back to 0
         app.switch_profile(-1);
         assert_eq!(app.active_profile, 0);
-        // Verify profile 1 WAS updated when switching away
-        assert_eq!(app.profiles[1].preamp, 2.0);
+        // Verify profile 1 was NOT updated when switching away
+        // (auto-save on switch was removed — only explicit :w saves)
+        assert_eq!(app.profiles[1].preamp, 0.0);
     }
 }
