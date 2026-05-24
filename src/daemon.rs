@@ -39,6 +39,17 @@ use crate::state::{EqBand, FilterState, NodeInfo, NullSinkState, PwCommand, PwEv
 /// This protects against resource exhaustion `DoS` (thread/memory leakage).
 const MAX_CLIENTS: usize = 10;
 
+/// Set by the SIGTERM / SIGINT signal handler.  Polled by the
+/// signal-watcher thread and the accept loop so the daemon can
+/// perform a clean shutdown (destroy `PipeWire` nodes, remove socket)
+/// instead of exiting immediately.
+static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn handle_signal(_sig: i32) {
+    // Async-signal-safe: store is lock-free, works inside a signal handler.
+    SHUTDOWN_REQUESTED.store(true, Ordering::Release);
+}
+
 pub struct DaemonState {
     pub pipeline: Arc<Pipeline>,
 
@@ -337,10 +348,49 @@ pub fn run(mut lock_file: std::fs::File) -> crate::AppResult<()> {
     let listener = UnixListener::bind(&socket_path)?;
     info!("Daemon listening on {}", socket_path.display());
 
+    // Register SIGTERM / SIGINT handlers so the daemon can shut down
+    // cleanly (destroy PipeWire nodes, remove socket file) instead of
+    // exiting immediately and leaving dangling resources.
+    //
+    // Safety: the signal handler only writes to SHUTDOWN_REQUESTED
+    // (lock-free atomic), which is async-signal-safe.  Signal handlers
+    // are process-global, but eqtui never exec()s another process after
+    // daemonization, so they remain in effect for the daemon's lifetime.
+    unsafe {
+        libc::signal(libc::SIGTERM, handle_signal as libc::sighandler_t);
+        libc::signal(libc::SIGINT, handle_signal as libc::sighandler_t);
+        // Ignore SIGHUP (terminal hangup) — the daemon has no terminal.
+        libc::signal(libc::SIGHUP, libc::SIG_IGN);
+    }
+
+    // The accept loop blocks on listener.incoming().  A signal alone
+    // won't unblock it (Rust's std retries EINTR silently), so spawn a
+    // watcher thread that connects to the socket when the flag is set,
+    // waking the listener immediately.
+    let shutdown_socket = socket_path.clone();
+    let _signal_watcher =
+        thread::Builder::new()
+            .name("signal-watcher".into())
+            .spawn(move || {
+                loop {
+                    thread::sleep(Duration::from_millis(100));
+                    if SHUTDOWN_REQUESTED.load(Ordering::Acquire) {
+                        let _ = UnixStream::connect(&shutdown_socket);
+                        break;
+                    }
+                }
+            })?;
+
     let mut client_id_counter: u64 = 0;
 
     for stream in listener.incoming() {
-        if state.shutting_down.load(Ordering::Relaxed) {
+        // Check both the client-requested shutdown flag and the
+        // signal-triggered flag.  Mirror the signal flag into daemon
+        // state so the bridge and peak threads see it too.
+        if SHUTDOWN_REQUESTED.load(Ordering::Acquire) {
+            state.shutting_down.store(true, Ordering::Release);
+        }
+        if state.shutting_down.load(Ordering::Acquire) {
             break;
         }
 
@@ -585,11 +635,6 @@ pub fn lock_path() -> crate::AppResult<PathBuf> {
 }
 
 /// Returns the XDG runtime directory for the current user.
-///
-/// This directory is used for the Unix socket and lock file.
-/// Strict requirement for `XDG_RUNTIME_DIR` to be set for security;
-/// falling back to /tmp would allow other local users to intercept
-/// or control the daemon.
 pub fn runtime_dir() -> crate::AppResult<PathBuf> {
     match std::env::var("XDG_RUNTIME_DIR") {
         Ok(dir) if !dir.is_empty() => Ok(PathBuf::from(dir)),
