@@ -60,6 +60,9 @@ pub struct App {
     pub filter_node_id: Option<u32>,
     pub filter_state: FilterState,
     pub null_sink: NullSinkState,
+    /// True when null-audio-sink creation failed — the filter runs
+    /// but processes silence because no audio source is wired.
+    pub null_sink_missing: bool,
     pub connected_devices: Vec<u32>,
 
     pub eq: EqState,
@@ -118,6 +121,7 @@ impl App {
             cached_peak_l: 0.0,
             cached_peak_r: 0.0,
             null_sink: NullSinkState::NotLoaded,
+            null_sink_missing: false,
             connected_devices: Vec::new(),
             filter_node_id: None,
             filter_state: FilterState::Unconnected,
@@ -164,10 +168,14 @@ impl App {
                 self.filter_node_id = Some(node_id);
             }
             PushEvent::NullSinkCreated { module_id } => {
+                self.null_sink_missing = false;
                 self.null_sink = NullSinkState::Loaded {
                     module_id,
                     has_source: false,
                 };
+            }
+            PushEvent::NullSinkMissing => {
+                self.null_sink_missing = true;
             }
             PushEvent::SourceActive { active } => {
                 self.null_sink.set_has_source(active);
@@ -352,6 +360,7 @@ impl App {
             cached_peak_l: 0.0,
             cached_peak_r: 0.0,
             null_sink: NullSinkState::NotLoaded,
+            null_sink_missing: false,
             connected_devices: Vec::new(),
             filter_node_id: None,
             filter_state: FilterState::Unconnected,

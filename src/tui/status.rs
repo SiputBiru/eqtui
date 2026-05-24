@@ -70,6 +70,11 @@ pub fn render_monitoring(app: &App, frame: &mut Frame, area: Rect) {
                     format!("Loaded (ID {})", app.null_sink.module_id().unwrap_or(0)),
                     Style::default().fg(Color::Cyan),
                 )
+            } else if app.null_sink_missing {
+                Span::styled(
+                    "FAILED — no audio source",
+                    Style::default().fg(Color::Red).bold(),
+                )
             } else {
                 Span::raw("Not loaded").dark_gray()
             },

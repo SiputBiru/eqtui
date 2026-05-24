@@ -136,7 +136,14 @@ impl DaemonState {
                     active: *has_source,
                 });
             }
-            PwEvent::NullSinkError(msg) | PwEvent::Error(msg) => {
+            PwEvent::NullSinkError(msg) => {
+                error!(%msg, "Null sink creation failed — filter will process silence");
+                self.push_event(PushEvent::NullSinkMissing);
+                self.push_event(PushEvent::Error {
+                    message: msg.clone(),
+                });
+            }
+            PwEvent::Error(msg) => {
                 error!(%msg, "PW error forwarded to clients");
                 self.push_event(PushEvent::Error {
                     message: msg.clone(),

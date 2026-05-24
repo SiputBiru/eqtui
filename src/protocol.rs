@@ -29,13 +29,31 @@ pub struct Response {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event")]
 pub enum PushEvent {
-    PeakUpdate { l: f32, r: f32 },
-    NodeList { nodes: Vec<NodeInfo> },
-    FilterReady { node_id: u32 },
-    StateChange { state: String },
-    NullSinkCreated { module_id: u32 },
-    SourceActive { active: bool },
-    Error { message: String },
+    PeakUpdate {
+        l: f32,
+        r: f32,
+    },
+    NodeList {
+        nodes: Vec<NodeInfo>,
+    },
+    FilterReady {
+        node_id: u32,
+    },
+    StateChange {
+        state: String,
+    },
+    NullSinkCreated {
+        module_id: u32,
+    },
+    SourceActive {
+        active: bool,
+    },
+    /// Sent once when the null-audio-sink could not be created.
+    /// The filter runs but processes silence — no audio source is wired.
+    NullSinkMissing,
+    Error {
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
