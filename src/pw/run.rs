@@ -195,7 +195,20 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
 
     let mainloop_cmd = mainloop.clone();
 
-    let _cmd_receiver = rx.attach(mainloop.loop_(), move |cmd| match cmd {
+    // Spawn a dedicated thread for pw-link subprocess calls so the
+    // PipeWire mainloop thread never blocks on fork/exec/waitpid.
+    let (link_tx, link_rx) = mpsc::channel::<(u32, u32, bool)>();
+    let link_worker = std::thread::spawn(move || {
+        for (filter_id, device_id, connect) in link_rx {
+            if connect {
+                create_device_output_links(filter_id, device_id);
+            } else {
+                remove_device_output_links(filter_id, device_id);
+            }
+        }
+    });
+
+    let cmd_receiver = rx.attach(mainloop.loop_(), move |cmd| match cmd {
         PwCommand::Terminate => {
             // Teardown order: deactivate/destroy filter first, then destroy the
             // null-audio-sink. The filter consumer must be torn down before the
@@ -225,7 +238,7 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
                 device_id = node_id,
                 "Connecting device to filter"
             );
-            create_device_output_links(filter_id, node_id);
+            let _ = link_tx.send((filter_id, node_id, true));
         }
         PwCommand::DisconnectDevice { filter_id, node_id } => {
             tracing::info!(
@@ -233,11 +246,19 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
                 device_id = node_id,
                 "Disconnecting device from filter"
             );
-            remove_device_output_links(filter_id, node_id);
+            let _ = link_tx.send((filter_id, node_id, false));
         }
     });
 
     let _ = tx.send(PwEvent::Connected);
 
     mainloop.run();
+
+    // Drop the command receiver to release the last sender, signalling the
+    // link-worker thread to exit. Join the worker before returning so no
+    // pw-link subprocess is left behind.
+    drop(cmd_receiver);
+    if let Err(e) = link_worker.join() {
+        tracing::error!("pw-link worker thread panicked: {e:?}");
+    }
 }

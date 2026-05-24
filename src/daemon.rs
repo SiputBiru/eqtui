@@ -494,6 +494,14 @@ fn dispatch_request(
                     "Cannot connect to the null sink (would create a feedback loop)",
                 );
             }
+            // Ignore duplicate connections rather than pushing the same
+            // device ID twice — the PipeWire link already exists.
+            {
+                let devices = state.connected_devices.lock().unwrap();
+                if devices.contains(&node_id) {
+                    return Response::ok();
+                }
+            }
             state.connected_devices.lock().unwrap().push(node_id);
             let _ = cmd_tx.send(PwCommand::ConnectDevice { filter_id, node_id });
             info!(node_id, "Device connected");
