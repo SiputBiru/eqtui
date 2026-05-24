@@ -57,7 +57,7 @@ impl EventThread {
         Self { sender }
     }
 
-    fn run(self) -> AppResult<()> {
+    fn run(self) {
         let tick_interval = Duration::from_secs_f64(1.0 / TICK_FPS);
         let mut last_tick = Instant::now();
 
@@ -65,17 +65,23 @@ impl EventThread {
             let timeout = tick_interval.saturating_sub(last_tick.elapsed());
             if timeout == Duration::ZERO {
                 last_tick = Instant::now();
-                self.sender.send(Event::Tick)?;
+                if self.sender.send(Event::Tick).is_err() {
+                    break;
+                }
             }
 
-            if event::poll(timeout)? {
-                let event = event::read()?;
+            if event::poll(timeout).unwrap_or(false) {
+                let Ok(event) = event::read() else { continue };
                 match event {
                     CrosstermEvent::Key(key) if key.kind == KeyEventKind::Press => {
-                        self.sender.send(Event::Key(key))?;
+                        if self.sender.send(Event::Key(key)).is_err() {
+                            break;
+                        }
                     }
                     CrosstermEvent::Resize(w, h) => {
-                        self.sender.send(Event::Resize(w, h))?;
+                        if self.sender.send(Event::Resize(w, h)).is_err() {
+                            break;
+                        }
                     }
                     _ => {}
                 }
