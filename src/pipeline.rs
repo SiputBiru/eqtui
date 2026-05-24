@@ -3,29 +3,20 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use color_eyre::eyre::Context;
-
-use crate::AppResult;
-use crate::effects::EffectPlugin;
-use crate::effects::equalizer::Equalizer;
-use crate::state::EqBand;
-
 /// Default sample rate for the DSP pipeline (48 kHz).
 /// `PipeWire` negotiates this format via SPA; all DSP is computed at this rate.
 pub const SAMPLE_RATE: f32 = 48_000.0;
 
 pub struct Pipeline {
-    eq: Equalizer,
-    bypass: AtomicBool,
-    preamp: AtomicU32,
-    peak_l: AtomicU32,
-    peak_r: AtomicU32,
+    pub(crate) bypass: AtomicBool,
+    pub(crate) preamp: AtomicU32,
+    pub(crate) peak_l: AtomicU32,
+    pub(crate) peak_r: AtomicU32,
 }
 
 impl Pipeline {
-    pub fn new(sample_rate: f32) -> Self {
+    pub fn new(_sample_rate: f32) -> Self {
         Self {
-            eq: Equalizer::new(sample_rate),
             bypass: AtomicBool::new(false),
             preamp: AtomicU32::new(1.0_f32.to_bits()),
             peak_l: AtomicU32::new(0.0_f32.to_bits()),
@@ -48,25 +39,14 @@ impl Pipeline {
         debug_assert!(!in_l.is_null(), "Input left buffer is null");
         debug_assert!(!in_r.is_null(), "Input right buffer is null");
         debug_assert!(!out_l.is_null(), "Output left buffer is null");
-        debug_assert!(!out_r.is_null(), "Output right buffer is null");
         debug_assert!(n > 0, "Process called with zero samples");
 
         let preamp = f32::from_bits(self.preamp.load(Ordering::Acquire));
 
-        if self.bypass.load(Ordering::Acquire) {
-            unsafe {
-                for i in 0..n {
-                    *out_l.add(i) = *in_l.add(i) * preamp;
-                    *out_r.add(i) = *in_r.add(i) * preamp;
-                }
-            }
-        } else {
-            unsafe { self.eq.process(in_l, in_r, out_l, out_r, n) };
-            unsafe {
-                for i in 0..n {
-                    *out_l.add(i) *= preamp;
-                    *out_r.add(i) *= preamp;
-                }
+        unsafe {
+            for i in 0..n {
+                *out_l.add(i) = *in_l.add(i) * preamp;
+                *out_r.add(i) = *in_r.add(i) * preamp;
             }
         }
 
@@ -103,18 +83,10 @@ impl Pipeline {
 
     pub fn set_preamp(&self, gain_db: f32) {
         let linear = 10.0_f32.powf(gain_db / 20.0);
-        // Using Release ordering to ensure the linear gain value is visible to the DSP thread.
         self.preamp.store(linear.to_bits(), Ordering::Release);
     }
 
-    pub fn set_bands(&self, bands: Vec<EqBand>, sample_rate: f32) -> AppResult<()> {
-        self.eq
-            .set_bands(&bands, sample_rate)
-            .wrap_err("Pipeline failed to set EQ bands")
-    }
-
     pub fn set_bypass(&self, bypass: bool) {
-        // Using Release ordering to ensure the bypass state is visible to the DSP thread.
         self.bypass.store(bypass, Ordering::Release);
     }
 
@@ -126,7 +98,6 @@ impl Pipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::FilterType;
 
     #[test]
     fn bypass_passthrough() {
@@ -147,32 +118,6 @@ mod tests {
             );
         }
         assert_eq!(lo, input);
-    }
-
-    #[test]
-    fn process_with_eq_produces_finite_output() {
-        let p = Pipeline::new(SAMPLE_RATE);
-        let bands = vec![EqBand {
-            frequency: 500.0,
-            gain: 3.0,
-            q: 1.0,
-            filter_type: FilterType::Peak,
-        }];
-        p.set_bands(bands, SAMPLE_RATE).unwrap();
-
-        let input = vec![0.3_f32; 256];
-        let mut lo = vec![0.0_f32; 256];
-        let mut ro = vec![0.0_f32; 256];
-        unsafe {
-            p.process(
-                input.as_ptr(),
-                input.as_ptr(),
-                lo.as_mut_ptr(),
-                ro.as_mut_ptr(),
-                input.len(),
-            );
-        }
-        assert!(lo.iter().all(|s| s.is_finite()));
     }
 
     #[test]
@@ -210,31 +155,13 @@ mod tests {
     }
 
     #[test]
-    fn preamp_prevents_clipping() {
+    fn preamp_applies_gain() {
         let p = Pipeline::new(SAMPLE_RATE);
-        // User's Filter 8: PK Fc 4573 Hz Gain 16.00 dB Q 0.400
-        let bands = vec![EqBand {
-            frequency: 4573.0,
-            gain: 16.0,
-            q: 0.4,
-            filter_type: FilterType::Peak,
-        }];
-        p.set_bands(bands, SAMPLE_RATE).unwrap();
+        p.set_preamp(-6.0);
 
-        // With -16.1dB preamp, total gain should be slightly below 0dB (1.0)
-        p.set_preamp(-16.1);
-
-        let n = 1024;
-        let freq = 4573.0;
-        let input: Vec<f32> = (0..n)
-            .map(|i| {
-                #[allow(clippy::cast_precision_loss)]
-                let idx = i as f32;
-                (2.0 * std::f32::consts::PI * freq * idx / SAMPLE_RATE).sin()
-            })
-            .collect();
-        let mut lo = vec![0.0_f32; n];
-        let mut ro = vec![0.0_f32; n];
+        let input = vec![0.5_f32; 64];
+        let mut lo = vec![0.0_f32; 64];
+        let mut ro = vec![0.0_f32; 64];
         unsafe {
             p.process(
                 input.as_ptr(),
@@ -244,13 +171,9 @@ mod tests {
                 input.len(),
             );
         };
-
-        let max_val = lo.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
-        println!("Max output value with preamp: {}", max_val);
-        assert!(
-            max_val <= 1.0,
-            "Expected no clipping (<= 1.0) but got {}",
-            max_val
-        );
+        // -6dB preamp = 10^(-6/20) ≈ 0.501 linear gain
+        // input 0.5 * 0.501 ≈ 0.251
+        let expected = 0.251_f32;
+        assert!((lo[0] - expected).abs() < 0.01);
     }
 }

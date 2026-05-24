@@ -1,12 +1,6 @@
 // Copyright (C) 2026 SiputBiru <hillsforrest03@gmail.com>
 // SPDX-License-Identifier: GPL-2.0-only
 
-use std::sync::RwLock;
-
-use color_eyre::eyre::eyre;
-
-use crate::AppResult;
-use crate::effects::EffectPlugin;
 use crate::state::{EqBand, FilterType};
 
 struct BiquadCoeffs {
@@ -25,46 +19,6 @@ struct BiquadState {
     y2: f32,
 }
 
-pub struct Equalizer {
-    bands: RwLock<Vec<BiquadCoeffs>>,
-    states_l: RwLock<Vec<BiquadState>>,
-    states_r: RwLock<Vec<BiquadState>>,
-    bypass: RwLock<bool>,
-}
-
-impl Equalizer {
-    pub fn new(sample_rate: f32) -> Self {
-        let _ = sample_rate;
-        Self {
-            bands: RwLock::new(Vec::new()),
-            states_l: RwLock::new(Vec::new()),
-            states_r: RwLock::new(Vec::new()),
-            bypass: RwLock::new(false),
-        }
-    }
-
-    pub fn set_bands(&self, bands: &[EqBand], sample_rate: f32) -> AppResult<()> {
-        let coeffs: Vec<BiquadCoeffs> = bands
-            .iter()
-            .map(|b| biquad_coefficients(b, sample_rate))
-            .collect();
-        let len = coeffs.len();
-        *self
-            .bands
-            .write()
-            .map_err(|e| eyre!("EQ RwLock poisoned: {e}"))? = coeffs;
-        *self
-            .states_l
-            .write()
-            .map_err(|e| eyre!("EQ RwLock poisoned: {e}"))? = vec![BiquadState::default(); len];
-        *self
-            .states_r
-            .write()
-            .map_err(|e| eyre!("EQ RwLock poisoned: {e}"))? = vec![BiquadState::default(); len];
-        Ok(())
-    }
-}
-
 impl Default for BiquadState {
     fn default() -> Self {
         Self {
@@ -76,28 +30,50 @@ impl Default for BiquadState {
     }
 }
 
-impl EffectPlugin for Equalizer {
-    fn name(&self) -> &'static str {
-        "Equalizer"
+/// Biquad equalizer with no internal synchronization.
+/// All access must happen from a single thread.
+pub struct AudioEq {
+    coeffs: Vec<BiquadCoeffs>,
+    states_l: Vec<BiquadState>,
+    states_r: Vec<BiquadState>,
+}
+
+impl AudioEq {
+    pub fn new(_sample_rate: f32) -> Self {
+        Self {
+            coeffs: Vec::new(),
+            states_l: Vec::new(),
+            states_r: Vec::new(),
+        }
     }
 
+    pub fn set_bands(&mut self, bands: &[EqBand], sample_rate: f32) {
+        self.coeffs = bands
+            .iter()
+            .map(|b| biquad_coefficients(b, sample_rate))
+            .collect();
+        let len = self.coeffs.len();
+        self.states_l.resize(len, BiquadState::default());
+        self.states_r.resize(len, BiquadState::default());
+    }
+
+    /// Process `n` audio samples through the biquad chain.
+    ///
+    /// # Safety
+    /// `in_l`, `in_r`, `out_l`, `out_r` must be valid for reads/writes of `n` samples.
     #[allow(
         clippy::many_single_char_names,
-        reason = "short variable names like n/l/r/s/y are standard notation for biquad filter math — maps directly to the DSP literature and improves readability for audio engineers"
+        reason = "short variable names like n/l/r/s/y are standard notation for biquad filter math"
     )]
-    unsafe fn process(
-        &self,
+    pub unsafe fn process(
+        &mut self,
         in_l: *const f32,
         in_r: *const f32,
         out_l: *mut f32,
         out_r: *mut f32,
         n: usize,
     ) {
-        let Ok(bypass) = self.bypass.read() else {
-            tracing::error!("EQ RwLock poisoned (bypass) in audio thread");
-            return;
-        };
-        if *bypass {
+        if self.coeffs.is_empty() {
             unsafe {
                 for i in 0..n {
                     *out_l.add(i) = *in_l.add(i);
@@ -106,42 +82,18 @@ impl EffectPlugin for Equalizer {
             }
             return;
         }
-
-        let Ok(bands) = self.bands.read() else {
-            tracing::error!("EQ RwLock poisoned (bands) in audio thread");
-            return;
-        };
-        if bands.is_empty() {
-            unsafe {
-                for i in 0..n {
-                    *out_l.add(i) = *in_l.add(i);
-                    *out_r.add(i) = *in_r.add(i);
-                }
-            }
-            return;
-        }
-
-        let Ok(mut states_l) = self.states_l.write() else {
-            tracing::error!("EQ RwLock poisoned (states_l) in audio thread");
-            return;
-        };
-        let Ok(mut states_r) = self.states_r.write() else {
-            tracing::error!("EQ RwLock poisoned (states_r) in audio thread");
-            return;
-        };
 
         unsafe {
             for i in 0..n {
                 let mut l = *in_l.add(i);
                 let mut r = *in_r.add(i);
 
-                for (band_i, coeffs) in bands.iter().enumerate() {
-                    let s = &mut states_l[band_i];
+                for (band_i, coeffs) in self.coeffs.iter().enumerate() {
+                    let s = &mut self.states_l[band_i];
                     let mut y = coeffs.b0 * l + coeffs.b1 * s.x1 + coeffs.b2 * s.x2
                         - coeffs.a1 * s.y1
                         - coeffs.a2 * s.y2;
 
-                    // Flush denormals to zero to prevent CPU spikes and audio static
                     if y.abs() < 1.0e-15 {
                         y = 0.0;
                     }
@@ -153,13 +105,12 @@ impl EffectPlugin for Equalizer {
                     l = y;
                 }
 
-                for (band_i, coeffs) in bands.iter().enumerate() {
-                    let s = &mut states_r[band_i];
+                for (band_i, coeffs) in self.coeffs.iter().enumerate() {
+                    let s = &mut self.states_r[band_i];
                     let mut y = coeffs.b0 * r + coeffs.b1 * s.x1 + coeffs.b2 * s.x2
                         - coeffs.a1 * s.y1
                         - coeffs.a2 * s.y2;
 
-                    // Flush denormals to zero to prevent CPU spikes and audio static
                     if y.abs() < 1.0e-15 {
                         y = 0.0;
                     }
@@ -174,39 +125,6 @@ impl EffectPlugin for Equalizer {
                 *out_l.add(i) = l;
                 *out_r.add(i) = r;
             }
-        }
-    }
-
-    fn bypass(&self) -> bool {
-        self.bypass.read().map_or_else(
-            |e| {
-                tracing::error!(%e, "EQ RwLock poisoned (bypass)");
-                false
-            },
-            |b| *b,
-        )
-    }
-
-    fn set_bypass(&self, bypass: bool) {
-        if let Err(e) = self.bypass.write().map(|mut b| *b = bypass) {
-            tracing::error!(%e, "EQ RwLock poisoned (set_bypass)");
-        }
-    }
-
-    fn reset(&self) {
-        if let Ok(mut states) = self.states_l.write() {
-            for s in states.iter_mut() {
-                *s = BiquadState::default();
-            }
-        } else {
-            tracing::error!("EQ RwLock poisoned (states_l) in reset");
-        }
-        if let Ok(mut states) = self.states_r.write() {
-            for s in states.iter_mut() {
-                *s = BiquadState::default();
-            }
-        } else {
-            tracing::error!("EQ RwLock poisoned (states_r) in reset");
         }
     }
 }
@@ -284,9 +202,8 @@ mod tests {
     }
 
     #[test]
-    fn passthrough_bypassed() {
-        let eq = Equalizer::new(SAMPLE_RATE);
-        eq.set_bypass(true);
+    fn passthrough_no_bands() {
+        let mut eq = AudioEq::new(SAMPLE_RATE);
         let input = vec![0.5_f32; 128];
         let mut lo = vec![0.0_f32; 128];
         let mut ro = vec![0.0_f32; 128];
@@ -304,26 +221,8 @@ mod tests {
     }
 
     #[test]
-    fn passthrough_no_bands() {
-        let eq = Equalizer::new(SAMPLE_RATE);
-        let input = vec![0.5_f32; 128];
-        let mut lo = vec![0.0_f32; 128];
-        let mut ro = vec![0.0_f32; 128];
-        unsafe {
-            eq.process(
-                input.as_ptr(),
-                input.as_ptr(),
-                lo.as_mut_ptr(),
-                ro.as_mut_ptr(),
-                input.len(),
-            );
-        }
-        assert_eq!(lo, input);
-    }
-
-    #[test]
     fn unity_gain_peak() {
-        let eq = Equalizer::new(SAMPLE_RATE);
+        let mut eq = AudioEq::new(SAMPLE_RATE);
         eq.set_bands(
             &[EqBand {
                 frequency: 1000.0,
@@ -332,8 +231,7 @@ mod tests {
                 filter_type: FilterType::Peak,
             }],
             SAMPLE_RATE,
-        )
-        .unwrap();
+        );
         let n = 1024;
         let input = vec![0.5_f32; n];
         let mut lo = vec![0.0_f32; n];
@@ -352,7 +250,7 @@ mod tests {
 
     #[test]
     fn positive_gain_boosts() {
-        let eq = Equalizer::new(SAMPLE_RATE);
+        let mut eq = AudioEq::new(SAMPLE_RATE);
         eq.set_bands(
             &[EqBand {
                 frequency: 1000.0,
@@ -361,8 +259,7 @@ mod tests {
                 filter_type: FilterType::Peak,
             }],
             SAMPLE_RATE,
-        )
-        .unwrap();
+        );
         let n = 4096;
         let freq = 1000.0;
         let sr = SAMPLE_RATE;
@@ -393,7 +290,7 @@ mod tests {
 
     #[test]
     fn negative_gain_cuts() {
-        let eq = Equalizer::new(SAMPLE_RATE);
+        let mut eq = AudioEq::new(SAMPLE_RATE);
         eq.set_bands(
             &[EqBand {
                 frequency: 1000.0,
@@ -402,8 +299,7 @@ mod tests {
                 filter_type: FilterType::Peak,
             }],
             SAMPLE_RATE,
-        )
-        .unwrap();
+        );
         let n = 4096;
         let freq = 1000.0;
         let sr = SAMPLE_RATE;
@@ -434,7 +330,7 @@ mod tests {
 
     #[test]
     fn multiple_bands_chain() {
-        let eq = Equalizer::new(SAMPLE_RATE);
+        let mut eq = AudioEq::new(SAMPLE_RATE);
         let bands = vec![
             EqBand {
                 frequency: 100.0,
@@ -455,7 +351,7 @@ mod tests {
                 filter_type: FilterType::HighShelf,
             },
         ];
-        eq.set_bands(&bands, SAMPLE_RATE).unwrap();
+        eq.set_bands(&bands, SAMPLE_RATE);
         let n = 512;
         let input = vec![0.3_f32; n];
         let mut lo = vec![0.0_f32; n];
@@ -469,13 +365,12 @@ mod tests {
                 input.len(),
             );
         }
-        // Output should exist and not panic
         assert!(lo.iter().all(|s| s.is_finite()));
     }
 
     #[test]
     fn low_shelf_boosts_bass() {
-        let eq = Equalizer::new(SAMPLE_RATE);
+        let mut eq = AudioEq::new(SAMPLE_RATE);
         eq.set_bands(
             &[EqBand {
                 frequency: 200.0,
@@ -484,8 +379,7 @@ mod tests {
                 filter_type: FilterType::LowShelf,
             }],
             SAMPLE_RATE,
-        )
-        .unwrap();
+        );
         let n = 4096;
         let freq = 50.0;
         let sr = SAMPLE_RATE;

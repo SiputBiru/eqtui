@@ -13,7 +13,8 @@ use pipewire::channel::Receiver;
 use pipewire::context::ContextRc;
 use pipewire::main_loop::MainLoopRc;
 
-use crate::pipeline::Pipeline;
+use crate::effects::AudioEq;
+use crate::pipeline::{Pipeline, SAMPLE_RATE};
 use crate::state::{DeviceClass, NodeInfo, PwCommand, PwEvent};
 
 use super::filter::{FilterHandle, create_eq_filter};
@@ -103,8 +104,6 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
     let tx_snapshot = tx.clone();
     let nodes_timer = nodes.clone();
 
-    // Declare cells BEFORE the timer so they can be captured.
-    // Use Rc so the timer closure and the null-sink listener can share.
     let null_sink_id_cell: Rc<Cell<Option<u32>>> = Rc::new(Cell::new(None));
 
     let ns_timer = null_sink_id_cell.clone();
@@ -112,10 +111,6 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
         let list: Vec<NodeInfo> = nodes_timer.borrow().iter().cloned().collect();
         let _ = tx_snapshot.send(PwEvent::NodeList(list));
 
-        // Poll whether an audio source is linked to the null sink's
-        // playback ports.  `pw-link -I` lists all links as
-        //   {out_id}:{out_port} -> {in_id}:{in_port}
-        // Checks if any link targets the null sink's input.
         if let Some(ns_id) = ns_timer.get() {
             let has_source = check_null_sink_input_source(ns_id);
             let _ = tx_snapshot.send(PwEvent::NullSinkInputState { has_source });
@@ -127,45 +122,30 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
     let filter_cell: Cell<Option<FilterHandle>> = Cell::new(None);
     let nullsink_cell: Cell<Option<NullSinkHandle>> = Cell::new(None);
 
-    // Create the virtual null-audio-sink BEFORE the equalizer filter.
-    // Attaching a proxy-listener that fires when the proxy is bound to a
-    // server-side global id; that callback then creates the filter wired
-    // to the null sink's monitor ports. This ordering ensures wiremix can
-    // discover eqtui as a selectable Audio/Sink.
+    let audio_eq = Box::into_raw(Box::new(AudioEq::new(SAMPLE_RATE)));
+
     let nullsink_handle = create_null_sink(core_raw, &tx);
 
     if let Some(mut handle) = nullsink_handle {
-        // Heap-allocate listener data. This Box is leaked into a raw
-        // pointer and freed during shutdown (NullSinkHandle::destroy).
         let listener_data = Box::new(NullSinkListenerData {
             tx: tx.clone(),
             core_raw,
             pipeline: pipeline.clone(),
-            // Safety: cell pointers live on the stack in run(), which
-            // outlives the mainloop (only quits on Terminate).
+            audio_eq,
             filter_cell_ptr: (&raw const filter_cell).cast_mut(),
             null_sink_id_cell_ptr: Rc::as_ptr(&null_sink_id_cell).cast_mut(),
             filter_created: Cell::new(false),
         });
         let data_ptr = Box::into_raw(listener_data);
 
-        // Allocate spa_hook for the proxy listener.
         let listener_box = Box::new(unsafe { mem::zeroed::<libspa_sys::spa_hook>() });
         let listener_ptr = Box::into_raw(listener_box);
 
-        // Set up pw_proxy_events with the bound callback.  When the
-        // null-sink proxy is bound, bound_cb reads the global id and
-        // creates the equalizer filter wired to it.
         let mut events_box = Box::new(unsafe { mem::zeroed::<pipewire_sys::pw_proxy_events>() });
         events_box.version = pipewire_sys::PW_VERSION_PROXY_EVENTS;
         events_box.bound = Some(bound_cb);
         let events_ptr = Box::into_raw(events_box);
 
-        // Safety: proxy is non-null (create_null_sink guarantees this).
-        // listener_ptr and events_ptr point to freshly allocated,
-        // heap-stable memory that outlives the proxy (freed on destroy).
-        // data_ptr holds cloned/ref-counted resources valid for the
-        // mainloop lifetime.
         unsafe {
             pipewire_sys::pw_proxy_add_listener(
                 handle.proxy,
@@ -175,7 +155,6 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
             );
         }
 
-        // Stash the listener pointers in the handle for cleanup.
         handle.listener_ptr = listener_ptr;
         handle.events_ptr = events_ptr;
         handle.data_ptr = data_ptr;
@@ -184,19 +163,18 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
         let _ = tx.send(PwEvent::NullSinkError(
             "failed to create null-audio-sink node".into(),
         ));
-        // Fallback: create filter without a null sink target so the
-        // equalizer remains functional even without wiremix visibility.
-        if let Some(handle) = create_eq_filter(core_raw, &pipeline, &tx, None) {
+        if let Some(handle) = create_eq_filter(core_raw, &pipeline, &tx, None, audio_eq) {
             filter_cell.set(Some(handle));
         } else {
+            unsafe {
+                drop(Box::from_raw(audio_eq));
+            }
             return;
         }
     }
 
     let mainloop_cmd = mainloop.clone();
 
-    // Spawn a dedicated thread for pw-link subprocess calls so the
-    // PipeWire mainloop thread never blocks on fork/exec/waitpid.
     let (link_tx, link_rx) = mpsc::channel::<(u32, u32, bool)>();
     let link_worker = std::thread::spawn(move || {
         for (filter_id, device_id, connect) in link_rx {
@@ -210,22 +188,12 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
 
     let cmd_receiver = rx.attach(mainloop.loop_(), move |cmd| match cmd {
         PwCommand::Terminate => {
-            // Teardown order: deactivate/destroy filter first, then destroy the
-            // null-audio-sink. The filter consumer must be torn down before the
-            // source node to avoid dangling PipeWire references.
             if let Some(handle) = filter_cell.take() {
-                // Safety: running on the mainloop thread while the core is
-                // still connected. The filter pointer and its allocations
-                // are valid — FilterHandle::destroy deactivates, disconnects,
-                // and frees all resources.
                 unsafe {
                     handle.destroy();
                 }
             }
             if let Some(handle) = nullsink_cell.take() {
-                // Safety: running on the mainloop thread while the core
-                // is still connected. pw_proxy_destroy frees the client-side
-                // proxy and destroys the server-side node.
                 unsafe {
                     handle.destroy();
                 }
@@ -248,17 +216,23 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
             );
             let _ = link_tx.send((filter_id, node_id, false));
         }
+        PwCommand::UpdateEq { bands } => {
+            let audio_eq = unsafe { &mut *audio_eq };
+            audio_eq.set_bands(&bands, SAMPLE_RATE);
+            tracing::info!(count = bands.len(), "EQ bands updated on mainloop");
+        }
     });
 
     let _ = tx.send(PwEvent::Connected);
 
     mainloop.run();
 
-    // Drop the command receiver to release the last sender, signalling the
-    // link-worker thread to exit. Join the worker before returning so no
-    // pw-link subprocess is left behind.
     drop(cmd_receiver);
     if let Err(e) = link_worker.join() {
         tracing::error!("pw-link worker thread panicked: {e:?}");
+    }
+
+    unsafe {
+        drop(Box::from_raw(audio_eq));
     }
 }

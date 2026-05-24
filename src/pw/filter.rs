@@ -11,6 +11,7 @@ use std::sync::mpsc;
 
 use pipewire::spa;
 
+use crate::effects::AudioEq;
 use crate::pipeline::{Pipeline, SAMPLE_RATE};
 use crate::state::{FilterState, PwEvent};
 
@@ -19,8 +20,7 @@ use super::props::Props;
 
 const DEFAULT_CHANNELS: u32 = 2;
 
-// Shared by process_buffers and process_cb — kept pub(crate) so other
-// crates-internal consumers can check the expected buffer size.
+// Shared by process_cb — kept pub(crate) so tests can check the expected buffer size.
 pub(crate) const DEFAULT_N_SAMPLES: u32 = 1024;
 
 // Used when setting node.name / CString in create_eq_filter.
@@ -29,6 +29,7 @@ const DSP_NODE_NAME: &str = "eqtui-dsp";
 // Filter callbacks
 struct FilterData {
     pipeline: Arc<Pipeline>,
+    audio_eq: *mut AudioEq,
     filter_ptr: *mut pipewire_sys::pw_filter,
     null_sink_id: Option<u32>,
     in_left: *mut c_void,
@@ -40,45 +41,9 @@ struct FilterData {
     filter_ready_sent: Cell<bool>,
 }
 
-/// Process audio buffers using the pipeline.
-///
-/// # Safety
-/// `in_l`, `in_r`, `out_l`, and `out_r` must be valid for reads/writes of `n_samples` samples.
-pub(crate) unsafe fn process_buffers(
-    pipeline: &Pipeline,
-    in_l: *mut f32,
-    in_r: *mut f32,
-    out_l: *mut f32,
-    out_r: *mut f32,
-    n_samples: usize,
-) {
-    if in_l.is_null() || in_r.is_null() || out_l.is_null() || out_r.is_null() {
-        return;
-    }
-
-    let align = mem::align_of::<f32>();
-    if !(in_l as usize).is_multiple_of(align)
-        || !(in_r as usize).is_multiple_of(align)
-        || !(out_l as usize).is_multiple_of(align)
-        || !(out_r as usize).is_multiple_of(align)
-    {
-        return;
-    }
-
-    unsafe {
-        pipeline.process(
-            in_l.cast_const(),
-            in_r.cast_const(),
-            out_l,
-            out_r,
-            n_samples,
-        );
-    }
-}
-
 unsafe extern "C" fn process_cb(data: *mut c_void, position: *mut libspa_sys::spa_io_position) {
     unsafe {
-        let fd = &*data.cast::<FilterData>();
+        let fd = &mut *data.cast::<FilterData>();
 
         let n_samples = if position.is_null() {
             DEFAULT_N_SAMPLES
@@ -96,15 +61,54 @@ unsafe extern "C" fn process_cb(data: *mut c_void, position: *mut libspa_sys::sp
         let out_right =
             pipewire_sys::pw_filter_get_dsp_buffer(fd.out_right, n_samples).cast::<f32>();
 
-        process_buffers(
-            &fd.pipeline,
-            in_left,
-            in_right,
-            out_left,
-            out_right,
-            n_samples as usize,
+        if in_left.is_null() || in_right.is_null() || out_left.is_null() || out_right.is_null() {
+            return;
+        }
+
+        let n = n_samples as usize;
+        let preamp = f32::from_bits(
+            fd.pipeline
+                .preamp
+                .load(std::sync::atomic::Ordering::Acquire),
         );
-    };
+        let bypassed = fd
+            .pipeline
+            .bypass
+            .load(std::sync::atomic::Ordering::Acquire);
+
+        if bypassed {
+            for i in 0..n {
+                *out_left.add(i) = *in_left.add(i) * preamp;
+                *out_right.add(i) = *in_right.add(i) * preamp;
+            }
+        } else {
+            let audio_eq = &mut *fd.audio_eq;
+            audio_eq.process(in_left, in_right, out_left, out_right, n);
+            for i in 0..n {
+                *out_left.add(i) *= preamp;
+                *out_right.add(i) *= preamp;
+            }
+        }
+
+        let mut max_l = 0.0_f32;
+        let mut max_r = 0.0_f32;
+        for i in 0..n {
+            let abs_l = (*out_left.add(i)).abs();
+            let abs_r = (*out_right.add(i)).abs();
+            if abs_l > max_l {
+                max_l = abs_l;
+            }
+            if abs_r > max_r {
+                max_r = abs_r;
+            }
+        }
+        fd.pipeline
+            .peak_l
+            .store(max_l.to_bits(), std::sync::atomic::Ordering::Relaxed);
+        fd.pipeline
+            .peak_r
+            .store(max_r.to_bits(), std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 unsafe extern "C" fn state_changed_cb(
@@ -125,9 +129,6 @@ unsafe extern "C" fn state_changed_cb(
         };
         let _ = fd.tx.send(PwEvent::FilterStateChanged(filter_state));
 
-        // When the filter reaches PAUSED state, its ports are registered.
-        // Linking occurs here because STREAMING may never be reached if there
-        // are no links to pull/push data.
         if (new == pipewire_sys::pw_filter_state_PW_FILTER_STATE_PAUSED
             || new == pipewire_sys::pw_filter_state_PW_FILTER_STATE_STREAMING)
             && !fd.monitor_links_created.get()
@@ -137,20 +138,14 @@ unsafe extern "C" fn state_changed_cb(
                 fd.monitor_links_created.set(true);
                 tracing::info!(filter_id, "Filter reached {}, creating links", state_str);
 
-                // Send the filter's node ID to the TUI so it can issue
-                // ConnectDevice / DisconnectDevice commands.
                 if !fd.filter_ready_sent.get() {
                     fd.filter_ready_sent.set(true);
                     let _ = fd.tx.send(PwEvent::FilterReady { node_id: filter_id });
                 }
 
-                // Capture from null sink monitor ports
                 if let Some(ns_id) = fd.null_sink_id {
                     create_monitor_links(ns_id, filter_id);
                 }
-
-                // Output links are created on-demand by the TUI via
-                // ConnectDevice / DisconnectDevice commands.
             } else {
                 tracing::warn!(
                     filter_id,
@@ -178,7 +173,6 @@ pub(crate) fn state_name_for(s: pipewire_sys::pw_filter_state) -> &'static str {
     }
 }
 
-// FilterHandle — bundles all pointers needed for teardown / recreation
 #[expect(dead_code, reason = "used via Cell<Option<FilterHandle>> in run()")]
 pub(crate) struct FilterHandle {
     filter: *mut pipewire_sys::pw_filter,
@@ -187,10 +181,7 @@ pub(crate) struct FilterHandle {
     port_out_l: *mut c_void,
     port_out_r: *mut c_void,
     filter_data_ptr: *mut FilterData,
-    // Heap-allocated spa_hook — must outlive the filter.
-    // Freed AFTER filter_destroy.
     listener_ptr: *mut libspa_sys::spa_hook,
-    // Heap-allocated pw_filter_events — must outlive the filter.
     events_ptr: *mut pipewire_sys::pw_filter_events,
 }
 
@@ -199,8 +190,6 @@ impl FilterHandle {
         unsafe {
             pipewire_sys::pw_filter_set_active(self.filter, false);
             pipewire_sys::pw_filter_disconnect(self.filter);
-            // filter_destroy cleans up PipeWire's internal hook references —
-            // must happen BEFORE listener and events heap allocations are freed.
             pipewire_sys::pw_filter_destroy(self.filter);
             if !self.filter_data_ptr.is_null() {
                 drop(Box::from_raw(self.filter_data_ptr));
@@ -215,12 +204,6 @@ impl FilterHandle {
     }
 }
 
-/// Register a single DSP port on a `pw_filter` node.
-///
-/// # Safety
-/// `filter` must be a valid non-null `pw_filter` pointer obtained from
-/// `pw_filter_new`. The returned pointer must outlive the filter and will
-/// be freed by `PipeWire` when `pw_filter_destroy` is called.
 unsafe fn add_dsp_port(
     filter: *mut pipewire_sys::pw_filter,
     name: &str,
@@ -231,9 +214,6 @@ unsafe fn add_dsp_port(
     p.set("object.path", name);
     p.set("audio.channel", channel);
     p.set("format.dsp", "32 bit float mono audio");
-    // SAFETY: `filter` is a valid non-null pw_filter pointer (caller guarantee).
-    // `p.into_raw()` transfers ownership of the pw_properties to PipeWire.
-    // All other args are safe primitives or null pointers.
     unsafe {
         pipewire_sys::pw_filter_add_port(
             filter,
@@ -253,23 +233,14 @@ pub(crate) fn create_eq_filter(
     pipeline: &Arc<Pipeline>,
     tx: &mpsc::Sender<PwEvent>,
     null_sink_id: Option<u32>,
+    audio_eq: *mut AudioEq,
 ) -> Option<FilterHandle> {
-    // Follow EasyEffects' pattern: do NOT set media.class on pw_filter nodes.
-    // Wiremix's monitor_node() only binds nodes with an exact media.class match
-    // on "Audio/Sink" / "Audio/Source" / "Stream/*".  Without media.class, the
-    // node is skipped entirely and wiremix never tries to enumerate PortConfig
-    // (which pw_filter nodes don't support), avoiding the crash:
-    //   "enum params id:11 (Spa:Enum:ParamId:PortConfig) failed"
     let props = Props::new("media.type", "Audio");
     props.set("media.category", "Duplex");
     props.set("media.role", "DSP");
     props.set("node.name", DSP_NODE_NAME);
     props.set("node.description", "eqtui (Processor)");
-    // Mark as virtual so WirePlumber doesn't auto-promote this filter to
-    // the default sink, which would steal audio streams and disrupt other
-    // PipeWire clients (e.g. wiremix) that are monitoring the graph.
     props.set("node.virtual", "true");
-    // Lowest session priority – extra guard against becoming default.
     props.set("priority.session", "0");
 
     let name_cstr =
@@ -282,10 +253,6 @@ pub(crate) fn create_eq_filter(
         return None;
     }
 
-    // Register four DSP ports. Port names follow PipeWire naming convention
-    // to enable discovery and wiring by tools like pw-link.
-    // Safety: filter is non-null (checked above). Port pointers are freed
-    // by PipeWire when the filter is destroyed.
     let in_left =
         unsafe { add_dsp_port(filter, "input_FL", "FL", libspa_sys::SPA_DIRECTION_INPUT) };
     let in_right =
@@ -302,6 +269,7 @@ pub(crate) fn create_eq_filter(
 
     let filter_data = Box::new(FilterData {
         pipeline: pipeline.clone(),
+        audio_eq,
         filter_ptr: filter,
         null_sink_id,
         in_left,
@@ -386,8 +354,6 @@ pub(crate) fn create_eq_filter(
 
     if ret != 0 {
         let _ = tx.send(PwEvent::Error(format!("filter_connect failed: {ret}")));
-        // Safety: the filter was created, listeners attached, but connection failed.
-        // It's safe to destroy the filter via the handle to free all resources.
         unsafe {
             handle.destroy();
         }
@@ -415,32 +381,5 @@ mod tests {
             state_name_for(pipewire_sys::pw_filter_state_PW_FILTER_STATE_STREAMING),
             "STREAMING"
         );
-    }
-
-    #[test]
-    fn test_process_buffers_null_checks() {
-        let pipeline = Pipeline::new(SAMPLE_RATE);
-        unsafe {
-            process_buffers(
-                &pipeline,
-                ptr::null_mut(),
-                ptr::null_mut(),
-                ptr::null_mut(),
-                ptr::null_mut(),
-                1024,
-            );
-        };
-    }
-
-    #[test]
-    fn test_process_buffers_alignment_checks() {
-        let pipeline = Pipeline::new(SAMPLE_RATE);
-        // These are synthetic pointers only used for alignment checking, so they
-        // don't need real provenance (using Strict Provenance API).
-        let misaligned = ptr::without_provenance_mut::<f32>(0x0123_4567);
-        let valid = ptr::without_provenance_mut::<f32>(0x0123_4568);
-        unsafe {
-            process_buffers(&pipeline, misaligned, valid, valid, valid, 1024);
-        };
     }
 }

@@ -530,8 +530,8 @@ fn dispatch_request(
         Request::SetBands { bands } => {
             let count = bands.len();
             (*state.eq_bands.lock().unwrap()).clone_from(&bands);
-            let _ = state.pipeline.set_bands(bands, SAMPLE_RATE);
-            info!(count, "Bands updated");
+            let _ = cmd_tx.send(PwCommand::UpdateEq { bands });
+            info!(count, "Bands queued for EQ update");
             Response::ok()
         }
 

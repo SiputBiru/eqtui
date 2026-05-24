@@ -9,6 +9,7 @@ use std::{
     sync::{Arc, mpsc},
 };
 
+use crate::effects::AudioEq;
 use crate::pipeline::Pipeline;
 use crate::state::PwEvent;
 
@@ -23,6 +24,7 @@ pub(crate) struct NullSinkListenerData {
     pub(crate) tx: mpsc::Sender<PwEvent>,
     pub(crate) core_raw: *mut pipewire_sys::pw_core,
     pub(crate) pipeline: Arc<Pipeline>,
+    pub(crate) audio_eq: *mut AudioEq,
     pub(crate) filter_cell_ptr: *mut Cell<Option<FilterHandle>>,
     pub(crate) null_sink_id_cell_ptr: *mut Cell<Option<u32>>,
     pub(crate) filter_created: Cell<bool>,
@@ -91,7 +93,13 @@ pub(crate) unsafe extern "C" fn bound_cb(data: *mut c_void, global_id: u32) {
         // by ConnectDevice / DisconnectDevice commands from the TUI.
         if !nd.filter_created.get() {
             nd.filter_created.set(true);
-            let handle = create_eq_filter(nd.core_raw, &nd.pipeline, &nd.tx, Some(global_id));
+            let handle = create_eq_filter(
+                nd.core_raw,
+                &nd.pipeline,
+                &nd.tx,
+                Some(global_id),
+                nd.audio_eq,
+            );
             if let Some(h) = handle {
                 (*nd.filter_cell_ptr).set(Some(h));
             }

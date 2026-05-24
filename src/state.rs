@@ -134,6 +134,7 @@ pub enum PwCommand {
     Terminate,
     ConnectDevice { filter_id: u32, node_id: u32 },
     DisconnectDevice { filter_id: u32, node_id: u32 },
+    UpdateEq { bands: Vec<EqBand> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
