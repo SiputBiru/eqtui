@@ -39,6 +39,11 @@ pub enum PushEvent {
     FilterReady {
         node_id: u32,
     },
+    /// Sent when the `pw_filter` state changes (STREAMING, ERROR, etc.).
+    /// The TUI uses this to update the monitoring panel state line.
+    FilterStateChanged {
+        state: FilterState,
+    },
     StateChange {
         state: String,
     },

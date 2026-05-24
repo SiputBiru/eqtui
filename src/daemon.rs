@@ -121,9 +121,23 @@ impl DaemonState {
             }
             PwEvent::FilterStateChanged(state) => {
                 *self.filter_state.lock().unwrap() = state.clone();
+                self.push_event(PushEvent::FilterStateChanged {
+                    state: state.clone(),
+                });
                 self.push_event(PushEvent::StateChange {
                     state: format!("filter:{state:?}"),
                 });
+
+                // When PipeWire disconnects, trigger a clean shutdown so
+                // the TUI can auto-launch a fresh daemon that connects to
+                // the (possibly restarted) PipeWire server.
+                if matches!(state, FilterState::Error(_)) {
+                    warn!("PipeWire connection lost — shutting down for restart");
+                    self.shutting_down.store(true, Ordering::Release);
+                    if let Ok(path) = socket_path() {
+                        let _ = UnixStream::connect(&path);
+                    }
+                }
             }
             PwEvent::FilterReady { node_id } => {
                 *self.filter_node_id.lock().unwrap() = Some(*node_id);

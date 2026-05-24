@@ -135,6 +135,33 @@ impl App {
             .expect("DaemonClient required — not available in unit tests")
     }
 
+    /// Attempt to reconnect after the daemon disconnected (e.g. `PipeWire`
+    /// restart triggered a daemon self-restart).  Restores the active
+    /// profile's bands, preamp, and bypass to the new daemon.
+    pub fn reconnect(&mut self) -> AppResult<()> {
+        let new_client = DaemonClient::connect()?;
+        self.client = Some(new_client);
+        self.full_sync()?;
+
+        // Restore the active profile to the new daemon.
+        if let Some(p) = self.profiles.get(self.active_profile) {
+            self.eq.bands.clone_from(&p.bands);
+            self.preamp = p.preamp;
+        }
+        let bands = self.eq.bands.clone();
+        let preamp = self.preamp;
+        let bypass = self.eq.bypass;
+        self.client().set_bands(&bands)?;
+        self.client().set_preamp(preamp)?;
+        self.client().set_bypass(bypass)?;
+
+        // Device links were destroyed with the old PipeWire graph.
+        // The TUI shows them as disconnected; the user reconnects manually.
+        self.connected_devices.clear();
+
+        Ok(())
+    }
+
     pub fn drain_events(&mut self) -> AppResult<()> {
         loop {
             let event = {
@@ -162,6 +189,9 @@ impl App {
                 if self.nodes_selected >= self.nodes.len() {
                     self.nodes_selected = self.nodes.len().saturating_sub(1);
                 }
+            }
+            PushEvent::FilterStateChanged { state } => {
+                self.filter_state = state;
             }
             PushEvent::StateChange { .. } => {}
             PushEvent::FilterReady { node_id } => {

@@ -3,7 +3,9 @@
 
 use std::io;
 use std::os::unix::fs::OpenOptionsExt;
+use std::process::{Command, Stdio};
 use std::sync::Arc;
+use std::time::Duration;
 
 use ratatui::backend::CrosstermBackend;
 use tracing_error::ErrorLayer;
@@ -83,6 +85,7 @@ fn main() -> AppResult<()> {
             daemon::run(lock_file)
         }
         "stop" => run_cli_stop(),
+        "restart" => run_cli_restart(),
         "load" => run_cli_load(&args),
         _ => run_tui_attach(),
     }
@@ -92,6 +95,29 @@ fn run_cli_stop() -> AppResult<()> {
     let mut client = DaemonClient::connect()?;
     client.shutdown()?;
     println!("Daemon stopped.");
+    Ok(())
+}
+
+fn run_cli_restart() -> AppResult<()> {
+    let mut client = DaemonClient::connect()?;
+    client.shutdown()?;
+    // Wait for the old daemon to release the lock file.
+    std::thread::sleep(Duration::from_millis(500));
+    match std::env::current_exe() {
+        Ok(exe) => {
+            Command::new(exe)
+                .arg("daemon")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()?;
+        }
+        Err(e) => {
+            eprintln!("Cannot determine binary path: {e}");
+            std::process::exit(1);
+        }
+    }
+    println!("Daemon restarted.");
     Ok(())
 }
 
@@ -137,9 +163,22 @@ fn run_tui_attach() -> AppResult<()> {
 
     while app.running {
         if let Err(e) = app.drain_events() {
-            tracing::error!(%e, "Daemon connection lost");
-            app.running = false;
-            break;
+            tracing::warn!(%e, "Daemon connection lost — attempting reconnect");
+            app.notify("Daemon disconnected — reconnecting...");
+            // Render the notification before blocking on reconnect.
+            tui.draw(|frame| tui::render(&app, frame))?;
+            match app.reconnect() {
+                Ok(()) => {
+                    tracing::info!("Reconnected to daemon");
+                    app.notify("Reconnected — bands and preamp restored");
+                }
+                Err(e) => {
+                    tracing::error!(%e, "Reconnect failed");
+                    app.notify(format!("Reconnect failed: {e}"));
+                    app.running = false;
+                    break;
+                }
+            }
         }
 
         match tui.events.next()? {
