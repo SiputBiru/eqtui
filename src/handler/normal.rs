@@ -112,7 +112,14 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
                     },
                     _ => String::new(),
                 };
-                app.eq.cell_input = tui_input::Input::new(val_str);
+                let start_empty = match app.eq.column_selected {
+                    1 => b.frequency == 0.0,
+                    2 => b.gain == 0.0,
+                    3 => b.q == 0.0,
+                    _ => false,
+                };
+                app.eq.cell_input =
+                    tui_input::Input::new(if start_empty { String::new() } else { val_str });
             }
         }
         KeyCode::Char('v') => app.mode = Mode::Visual,

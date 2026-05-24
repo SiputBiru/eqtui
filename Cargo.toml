@@ -1,6 +1,6 @@
 [package]
 name = "eqtui"
-version = "0.1.1-alpha.4"
+version = "0.1.1-alpha.5"
 description = "Terminal-native(TUI) audio effects processor for PipeWire"
 authors = ["SiputBiru <hillsforrest03@gmail.com>"]
 license = "GPL-2.0-only"
