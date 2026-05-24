@@ -3,9 +3,7 @@
 
 use std::io;
 use std::os::unix::fs::OpenOptionsExt;
-use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::time::Duration;
 
 use ratatui::backend::CrosstermBackend;
 use tracing_error::ErrorLayer;
@@ -14,7 +12,7 @@ use tracing_subscriber::prelude::*;
 use eqtui::{
     AppResult,
     app::App,
-    autoeq::parse_peq,
+    cli,
     client::DaemonClient,
     config::Config,
     daemon,
@@ -84,62 +82,11 @@ fn main() -> AppResult<()> {
             tracing::info!("Daemonized successfully");
             daemon::run(lock_file)
         }
-        "stop" => run_cli_stop(),
-        "restart" => run_cli_restart(),
-        "load" => run_cli_load(&args),
+        "stop" => cli::run_stop(),
+        "restart" => cli::run_restart(),
+        "load" => cli::run_load(&args),
         _ => run_tui_attach(),
     }
-}
-
-fn run_cli_stop() -> AppResult<()> {
-    let mut client = DaemonClient::connect()?;
-    client.shutdown()?;
-    println!("Daemon stopped.");
-    Ok(())
-}
-
-fn run_cli_restart() -> AppResult<()> {
-    let mut client = DaemonClient::connect()?;
-    client.shutdown()?;
-    // Wait for the old daemon to release the lock file.
-    std::thread::sleep(Duration::from_millis(500));
-    match std::env::current_exe() {
-        Ok(exe) => {
-            Command::new(exe)
-                .arg("daemon")
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()?;
-        }
-        Err(e) => {
-            eprintln!("Cannot determine binary path: {e}");
-            std::process::exit(1);
-        }
-    }
-    println!("Daemon restarted.");
-    Ok(())
-}
-
-fn run_cli_load(args: &[String]) -> AppResult<()> {
-    let path = args.get(2).ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "Usage: eqtui load <peq_file>",
-        )
-    })?;
-
-    let preset = parse_peq(std::path::Path::new(path))?;
-    let mut client = DaemonClient::connect()?;
-    client.set_preamp(preset.preamp)?;
-    client.set_bands(&preset.bands)?;
-
-    println!(
-        "Loaded: {} bands, preamp {:.1} dB",
-        preset.bands.len(),
-        preset.preamp
-    );
-    Ok(())
 }
 
 fn run_tui_attach() -> AppResult<()> {
