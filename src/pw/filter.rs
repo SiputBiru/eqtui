@@ -83,11 +83,7 @@ unsafe extern "C" fn process_cb(data: *mut c_void, position: *mut libspa_sys::sp
             }
         } else {
             let audio_eq = &mut *fd.audio_eq;
-            audio_eq.process(in_left, in_right, out_left, out_right, n);
-            for i in 0..n {
-                *out_left.add(i) *= preamp;
-                *out_right.add(i) *= preamp;
-            }
+            audio_eq.process(in_left, in_right, out_left, out_right, n, preamp);
         }
 
         let mut max_l = 0.0_f32;

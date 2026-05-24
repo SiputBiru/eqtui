@@ -57,7 +57,7 @@ impl AudioEq {
         self.states_r.resize(len, BiquadState::default());
     }
 
-    /// Process `n` audio samples through the biquad chain.
+    /// Process `n` audio samples through the biquad chain with preamp.
     ///
     /// # Safety
     /// `in_l`, `in_r`, `out_l`, `out_r` must be valid for reads/writes of `n` samples.
@@ -72,12 +72,13 @@ impl AudioEq {
         out_l: *mut f32,
         out_r: *mut f32,
         n: usize,
+        preamp: f32,
     ) {
         if self.coeffs.is_empty() {
             unsafe {
                 for i in 0..n {
-                    *out_l.add(i) = *in_l.add(i);
-                    *out_r.add(i) = *in_r.add(i);
+                    *out_l.add(i) = *in_l.add(i) * preamp;
+                    *out_r.add(i) = *in_r.add(i) * preamp;
                 }
             }
             return;
@@ -122,8 +123,8 @@ impl AudioEq {
                     r = y;
                 }
 
-                *out_l.add(i) = l;
-                *out_r.add(i) = r;
+                *out_l.add(i) = l * preamp;
+                *out_r.add(i) = r * preamp;
             }
         }
     }
@@ -214,6 +215,7 @@ mod tests {
                 lo.as_mut_ptr(),
                 ro.as_mut_ptr(),
                 input.len(),
+                1.0,
             );
         }
         assert_eq!(lo, input);
@@ -243,6 +245,7 @@ mod tests {
                 lo.as_mut_ptr(),
                 ro.as_mut_ptr(),
                 input.len(),
+                1.0,
             );
         }
         assert!((rms(&input) - rms(&lo)).abs() < 0.1);
@@ -279,6 +282,7 @@ mod tests {
                 lo.as_mut_ptr(),
                 ro.as_mut_ptr(),
                 input.len(),
+                1.0,
             );
         }
         assert!(
@@ -319,6 +323,7 @@ mod tests {
                 lo.as_mut_ptr(),
                 ro.as_mut_ptr(),
                 input.len(),
+                1.0,
             );
         }
         assert!(
@@ -363,6 +368,7 @@ mod tests {
                 lo.as_mut_ptr(),
                 ro.as_mut_ptr(),
                 input.len(),
+                1.0,
             );
         }
         assert!(lo.iter().all(|s| s.is_finite()));
@@ -399,6 +405,7 @@ mod tests {
                 lo.as_mut_ptr(),
                 ro.as_mut_ptr(),
                 input.len(),
+                1.0,
             );
         }
         assert!(
