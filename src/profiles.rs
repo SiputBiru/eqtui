@@ -71,8 +71,8 @@ pub fn load() -> Vec<Profile> {
                         profile.preamp = preset.preamp;
                     }
                     Err(e) => {
-                        eprintln!(
-                            "Warning: Failed to load external profile from {}: {}",
+                        tracing::warn!(
+                            "Failed to load external profile from {}: {}",
                             full_path.display(),
                             e
                         );
@@ -95,8 +95,8 @@ pub fn load() -> Vec<Profile> {
                         profile.preamp = preset.preamp;
                     }
                     Err(e) => {
-                        eprintln!(
-                            "Warning: Failed to load external profile from {}: {}",
+                        tracing::warn!(
+                            "Failed to load external profile from {}: {}",
                             full_path.display(),
                             e
                         );
