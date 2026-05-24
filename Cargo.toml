@@ -8,7 +8,7 @@ repository = "https://github.com/SiputBiru/eqtui"
 readme = "README.md"
 keywords = ["pipewire", "equalizer", "tui", "audio", "dsp"]
 categories = ["multimedia::audio", "command-line-utilities"]
-exclude = [".cache", ".tmp/", ".github/", ".docs/", "target/"]
+exclude = ["imgs/", ".cache", ".tmp/", ".github/", ".docs/", "target/"]
 rust-version = "1.89.0"
 edition = "2024"
 
