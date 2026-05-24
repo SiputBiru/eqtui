@@ -51,22 +51,15 @@ impl Pipeline {
         }
 
         let mut max_l = 0.0_f32;
-        unsafe {
-            for i in 0..n {
-                let abs = (*out_l.add(i)).abs();
-                if abs > max_l {
-                    max_l = abs;
-                }
-            }
-        }
-
         let mut max_r = 0.0_f32;
-        unsafe {
-            for i in 0..n {
-                let abs = (*out_r.add(i)).abs();
-                if abs > max_r {
-                    max_r = abs;
-                }
+        for i in 0..n {
+            let abs_l = unsafe { (*out_l.add(i)).abs() };
+            let abs_r = unsafe { (*out_r.add(i)).abs() };
+            if abs_l > max_l {
+                max_l = abs_l;
+            }
+            if abs_r > max_r {
+                max_r = abs_r;
             }
         }
 
