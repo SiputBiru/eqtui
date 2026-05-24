@@ -24,6 +24,8 @@ eqtui daemon    # start the engine (background)
 eqtui           # open the TUI
 eqtui stop      # stop the daemon
 eqtui restart   # restart the daemon
+eqtui --help    # show all commands
+eqtui --version # show version
 ```
 
 Close with `q` — the EQ keeps running. Re-attach anytime with `eqtui attach`.

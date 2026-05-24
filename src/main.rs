@@ -21,6 +21,21 @@ use eqtui::{
     tui::{self, Tui},
 };
 
+fn print_usage() {
+    eprintln!("Usage: eqtui <command>");
+    eprintln!();
+    eprintln!("Commands:");
+    eprintln!("  daemon           Start the background daemon");
+    eprintln!("  attach           Attach TUI to running daemon (default)");
+    eprintln!("  stop             Stop the daemon");
+    eprintln!("  restart          Restart the daemon");
+    eprintln!("  load <file>      Load a PEQ preset file");
+    eprintln!();
+    eprintln!("Options:");
+    eprintln!("  -h, --help       Show this help");
+    eprintln!("  -V, --version    Print version");
+}
+
 fn main() -> AppResult<()> {
     let log_dir = dirs::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
@@ -47,6 +62,14 @@ fn main() -> AppResult<()> {
     let mode = args.get(1).map_or("attach", std::string::String::as_str);
 
     match mode {
+        "-h" | "--help" => {
+            print_usage();
+            Ok(())
+        }
+        "-V" | "--version" => {
+            println!("eqtui v{}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         "daemon" => {
             let stdout = std::fs::OpenOptions::new()
                 .create(true)
