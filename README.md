@@ -1,5 +1,7 @@
 # eqtui
 
+[![CI](https://github.com/SiputBiru/eqtui/actions/workflows/ci.yml/badge.svg)](https://github.com/SiputBiru/eqtui/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/eqtui.svg?label=crates.io)](https://crates.io/crates/eqtui)
 [![License: GPL-2.0-only](https://img.shields.io/badge/License-GPL--2.0--only-blue.svg)](LICENSE)
 
 A keyboard-driven parametric EQ for PipeWire that lives in the terminal.
@@ -8,7 +10,7 @@ Built with [Ratatui](https://ratatui.rs).
 <img src="./imgs/theviewofthetui.png" width="640" alt="idontknowwhattocallforthis">
 
 [EasyEffects](https://github.com/wwmm/easyeffects) is great, but sometimes I just
-want a simple EQ — not a full DSP pipeline with a GTK or Qt UI.
+want a simple EQ — not a full DSP pipeline with a GTK or Qt UI.<br>
 And also i just want to learn little bit about DSP stuff.
 
 Runs as a background daemon so the EQ keeps going even after closing the TUI.
@@ -21,6 +23,7 @@ cargo install eqtui --version 0.1.1-alpha.x # cause its still alpha
 eqtui daemon    # start the engine (background)
 eqtui           # open the TUI
 eqtui stop      # stop the daemon
+eqtui restart   # restart the daemon
 ```
 
 Close with `q` — the EQ keeps running. Re-attach anytime with `eqtui attach`.
@@ -202,7 +205,7 @@ Needs PipeWire and a Nerd Font.
 ## Known Issues
 
 - **Frequency Response Graph (Right Panel):** Still a work-in-progress.
-  Currently renders a static placeholder target curve (PEQdB Diamond β).
+  Currently renders a static placeholder target curve (PEQdB Diamond β, why PEQdb? idk man i just see it cool).
   The actual EQ transfer function overlay is not yet implemented.
 
 ---
