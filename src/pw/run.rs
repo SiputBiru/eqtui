@@ -6,6 +6,7 @@ use std::mem;
 use std::os::raw::c_void;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -105,18 +106,40 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
     let nodes_timer = nodes.clone();
 
     let null_sink_id_cell: Rc<Cell<Option<u32>>> = Rc::new(Cell::new(None));
+    let ns_id_atomic: Arc<AtomicU32> = Arc::new(AtomicU32::new(0));
 
+    // Timer callback — runs on PW mainloop. Node list is cheap (clone a Vec).
+    // The null-sink input check is offloaded to a dedicated thread to avoid
+    // blocking the audio thread with a fork/exec of pw-link -I.
     let ns_timer = null_sink_id_cell.clone();
+    let ns_atomic = ns_id_atomic.clone();
     let timer = mainloop.loop_().add_timer(move |_| {
         let list: Vec<NodeInfo> = nodes_timer.borrow().iter().cloned().collect();
         let _ = tx_snapshot.send(PwEvent::NodeList(list));
 
-        if let Some(ns_id) = ns_timer.get() {
-            let has_source = check_null_sink_input_source(ns_id);
-            let _ = tx_snapshot.send(PwEvent::NullSinkInputState { has_source });
-        }
+        // Sync the null sink ID (set by the PW registry listener on this
+        // same thread) so the checker thread can see it.
+        ns_atomic.store(ns_timer.get().unwrap_or(0), Ordering::Release);
     });
     timer.update_timer(Some(Duration::from_millis(500)), None);
+
+    // Dedicated thread — runs pw-link -I off the PipeWire mainloop so the
+    // audio thread is never blocked by fork/exec/waitpid.
+    let ns_checker_tx = tx.clone();
+    let ns_checker = ns_id_atomic.clone();
+    std::thread::Builder::new()
+        .name("null-sink-checker".into())
+        .spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_millis(500));
+                let ns_id = ns_checker.load(Ordering::Acquire);
+                if ns_id > 0 {
+                    let has_source = check_null_sink_input_source(ns_id);
+                    let _ = ns_checker_tx.send(PwEvent::NullSinkInputState { has_source });
+                }
+            }
+        })
+        .expect("failed to spawn null-sink-checker thread");
 
     let core_raw = core.as_raw_ptr().cast::<pipewire_sys::pw_core>();
     let filter_cell: Cell<Option<FilterHandle>> = Cell::new(None);
