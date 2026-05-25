@@ -82,7 +82,7 @@ pub fn render(app: &App, frame: &mut ratatui::Frame) {
     let [devices_area, bands_area, monitoring_area] = Layout::vertical([
         Constraint::Fill(2),
         Constraint::Fill(3),
-        Constraint::Length(8),
+        Constraint::Length(9),
     ])
     .areas(sidebar_area);
 

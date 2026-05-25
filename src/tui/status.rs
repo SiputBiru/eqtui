@@ -100,8 +100,21 @@ pub fn render_monitoring(app: &App, frame: &mut Frame, area: Rect) {
     frame.render_widget(Paragraph::new(stats), text_area);
 
     // Meters (Vertical stack for sidebar)
-    let [l_area, r_area] =
-        Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(meters_area);
+    let [preamp_area, l_area, r_area] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .areas(meters_area);
+
+    let preamp_line = Line::from(vec![
+        Span::raw("Preamp: "),
+        Span::styled(
+            format!("{:.1} dB", app.preamp),
+            Style::default().fg(Color::Cyan),
+        ),
+    ]);
+    frame.render_widget(Paragraph::new(preamp_line), preamp_area);
 
     let ratio_l = f64::from(((app.peak_l - (-60.0)) / 60.0).clamp(0.0, 1.0));
     let ratio_r = f64::from(((app.peak_r - (-60.0)) / 60.0).clamp(0.0, 1.0));
