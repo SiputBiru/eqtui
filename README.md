@@ -106,6 +106,7 @@ Settings are stored in standard `XDG` locations.
 - **Config:** `~/.config/eqtui/config.toml`
 - **Profiles:** `~/.config/eqtui/profiles.toml`
 - **Logs:** `~/.local/share/eqtui/eqtui.log`
+- **State:** `~/.local/share/eqtui/state.toml` (auto-saved daemon snapshot)
 
 ### Profile System
 
@@ -193,6 +194,7 @@ The daemon employs standard Linux mechanisms for lifecycle management and securi
 - **Exclusive Advisory Locking:** An advisory lock (`flock`) on a dedicated file ensures only one daemon instance runs at a time. This method is robust against stale lock files from previous crashes.
 - **Specialized POSIX Daemonization:** A custom double-fork procedure detaches the process from the controlling terminal. This prevents the daemon from unintentionally re-acquiring a terminal and ensures it continues running as a background service.
 - **FD Security:** File descriptors for logs and the lock file are opened with `O_CLOEXEC` to prevent accidental inheritance by child processes (e.g., when spawning `pw-link`).
+- **State Persistence:** The daemon automatically saves its current state (bands, preamp, bypass, connected devices) to `state.toml` after every change. If the daemon crashes or is killed, this state is restored on the next start — no unsaved tweaks are lost.
 
 ## Install from Source
 

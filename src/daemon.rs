@@ -23,6 +23,7 @@ use std::time::Duration;
 
 use libc::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
 use pipewire::channel;
+use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 use uds::UnixStreamExt;
 
@@ -233,6 +234,57 @@ impl DaemonState {
     }
 }
 
+// ── State Persistence ──────────────────────────────────────────
+//
+// The daemon's in-memory state (bands, preamp, bypass, connected
+// devices) is periodically saved to `$XDG_DATA_HOME/eqtui/state.toml`
+// so it survives crashes and SIGKILLs.
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StateSnapshot {
+    bands: Vec<EqBand>,
+    preamp: f32,
+    bypass: bool,
+    connected_devices: Vec<u32>,
+}
+
+fn state_path() -> PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("eqtui")
+        .join("state.toml")
+}
+
+fn save_state(state: &DaemonState) {
+    let snap = StateSnapshot {
+        bands: state.eq_bands.lock().unwrap().clone(),
+        preamp: *state.preamp.lock().unwrap(),
+        bypass: *state.bypass.lock().unwrap(),
+        connected_devices: state.connected_devices.lock().unwrap().clone(),
+    };
+    let path = state_path();
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(&path, toml::to_string_pretty(&snap).unwrap_or_default());
+}
+
+fn restore_state(state: &DaemonState) {
+    let path = state_path();
+    let Ok(contents) = fs::read_to_string(&path) else {
+        return;
+    };
+    let Ok(snap) = toml::from_str::<StateSnapshot>(&contents) else {
+        return;
+    };
+    *state.eq_bands.lock().unwrap() = snap.bands;
+    *state.preamp.lock().unwrap() = snap.preamp;
+    *state.bypass.lock().unwrap() = snap.bypass;
+    *state.connected_devices.lock().unwrap() = snap.connected_devices;
+    state.pipeline.set_preamp(snap.preamp);
+    state.pipeline.set_bypass(snap.bypass);
+}
+
 /// Initializes the process as a daemon using the standard double-fork procedure.
 ///
 /// A double fork prevents the daemon from ever re-acquiring a controlling terminal,
@@ -310,6 +362,7 @@ pub fn run(mut lock_file: std::fs::File) -> crate::AppResult<()> {
 
     let pipeline = Arc::new(Pipeline::new(SAMPLE_RATE));
     let state = Arc::new(DaemonState::new(pipeline.clone()));
+    restore_state(&state);
 
     let (pw_tx, pw_rx) = mpsc::channel::<PwEvent>();
     let (cmd_tx, cmd_rx) = channel::channel::<PwCommand>();
@@ -446,6 +499,7 @@ pub fn run(mut lock_file: std::fs::File) -> crate::AppResult<()> {
     }
 
     info!("Daemon shutting down");
+    save_state(&state);
     let _ = cmd_tx.send(PwCommand::Terminate);
     let _ = pw_thread.join();
     let _ = fs::remove_file(&socket_path);
@@ -532,6 +586,7 @@ fn dispatch_request(
             (*state.eq_bands.lock().unwrap()).clone_from(&bands);
             let _ = cmd_tx.send(PwCommand::UpdateEq { bands });
             info!(count, "Bands queued for EQ update");
+            save_state(state);
             Response::ok()
         }
 
@@ -539,6 +594,7 @@ fn dispatch_request(
             *state.preamp.lock().unwrap() = gain;
             state.pipeline.set_preamp(gain);
             info!(gain, "Preamp updated");
+            save_state(state);
             Response::ok()
         }
 
@@ -546,6 +602,7 @@ fn dispatch_request(
             *state.bypass.lock().unwrap() = bypass;
             state.pipeline.set_bypass(bypass);
             info!(bypass, "Bypass toggled");
+            save_state(state);
             Response::ok()
         }
 
@@ -576,6 +633,7 @@ fn dispatch_request(
             state.connected_devices.lock().unwrap().push(node_id);
             let _ = cmd_tx.send(PwCommand::ConnectDevice { filter_id, node_id });
             info!(node_id, "Device connected");
+            save_state(state);
             Response::ok()
         }
 
@@ -590,6 +648,7 @@ fn dispatch_request(
                 .retain(|id| *id != node_id);
             let _ = cmd_tx.send(PwCommand::DisconnectDevice { filter_id, node_id });
             info!(node_id, "Device disconnected");
+            save_state(state);
             Response::ok()
         }
 
