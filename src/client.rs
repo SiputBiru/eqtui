@@ -32,7 +32,7 @@ impl DaemonClient {
         }
 
         info!("No daemon found — auto-launching");
-        spawn_daemon();
+        let daemon_pid = spawn_daemon();
 
         let timeout_ms = std::env::var("EQTUI_DAEMON_START_TIMEOUT_MS")
             .ok()
@@ -44,6 +44,14 @@ impl DaemonClient {
             if let Ok(client) = Self::try_connect(&path) {
                 info!("Connected to auto-launched daemon");
                 return Ok(client);
+            }
+        }
+
+        if let Some(pid) = daemon_pid {
+            warn!(pid, "Daemon start timed out — sending SIGTERM to orphan");
+            #[allow(clippy::cast_possible_wrap)]
+            unsafe {
+                libc::kill(pid as libc::pid_t, libc::SIGTERM);
             }
         }
 
@@ -206,10 +214,10 @@ fn runtime_dir() -> crate::AppResult<PathBuf> {
     }
 }
 
-fn spawn_daemon() {
+fn spawn_daemon() -> Option<u32> {
     let Ok(exe) = std::env::current_exe() else {
         warn!("Cannot determine own binary path — daemon auto-launch disabled");
-        return;
+        return None;
     };
 
     match Command::new(exe)
@@ -220,10 +228,13 @@ fn spawn_daemon() {
         .spawn()
     {
         Ok(child) => {
-            info!(pid = child.id(), "Spawned daemon");
+            let pid = child.id();
+            info!(pid, "Spawned daemon");
+            Some(pid)
         }
         Err(e) => {
             warn!(%e, "Failed to spawn daemon");
+            None
         }
     }
 }
