@@ -41,7 +41,11 @@ impl Pipeline {
         debug_assert!(!out_l.is_null(), "Output left buffer is null");
         debug_assert!(n > 0, "Process called with zero samples");
 
-        let preamp = f32::from_bits(self.preamp.load(Ordering::Acquire));
+        let preamp = if self.bypass.load(Ordering::Acquire) {
+            1.0
+        } else {
+            f32::from_bits(self.preamp.load(Ordering::Acquire))
+        };
 
         unsafe {
             for i in 0..n {
