@@ -43,10 +43,24 @@ fn main() -> AppResult<()> {
         .join("eqtui");
 
     std::fs::create_dir_all(&log_dir)?;
-    let log_file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_dir.join("eqtui.log"))?;
+
+    let args: Vec<String> = std::env::args().collect();
+    let mode = args.get(1).map_or("attach", std::string::String::as_str);
+
+    // Truncate the log for daemon sessions to prevent unbounded growth;
+    // attach / stop / load are short-lived and append without clobbering.
+    let log_file = if mode == "daemon" {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(log_dir.join("eqtui.log"))?
+    } else {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_dir.join("eqtui.log"))?
+    };
 
     tracing_subscriber::registry()
         .with(
@@ -58,9 +72,6 @@ fn main() -> AppResult<()> {
         .init();
 
     color_eyre::install()?;
-
-    let args: Vec<String> = std::env::args().collect();
-    let mode = args.get(1).map_or("attach", std::string::String::as_str);
 
     match mode {
         "-h" | "--help" => {
