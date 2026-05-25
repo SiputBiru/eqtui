@@ -299,12 +299,18 @@ impl App {
             p.bands.clone_from(&self.eq.bands);
             p.preamp = self.preamp;
         }
-        profiles::save(&self.profiles);
-        self.notify(format!(
-            "Saved {} bands, preamp {:.1} dB",
-            self.eq.bands.len(),
-            self.preamp
-        ));
+        match profiles::save(&self.profiles) {
+            Ok(()) => {
+                self.notify(format!(
+                    "Saved {} bands, preamp {:.1} dB",
+                    self.eq.bands.len(),
+                    self.preamp
+                ));
+            }
+            Err(e) => {
+                self.notify(format!("Failed to save: {e}"));
+            }
+        }
         Ok(())
     }
 

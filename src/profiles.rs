@@ -107,11 +107,11 @@ pub fn resolve_path(path: &str) -> PathBuf {
     }
 }
 
-pub fn save(profiles: &[Profile]) {
+pub fn save(profiles: &[Profile]) -> std::io::Result<()> {
     let pf = ProfilesFile {
         profiles: profiles.to_vec(),
     };
-    let _ = save_raw(&pf, &profiles_path());
+    save_raw(&pf, &profiles_path())
 }
 
 fn save_raw(pf: &ProfilesFile, path: &PathBuf) -> std::io::Result<()> {
