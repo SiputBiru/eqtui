@@ -360,6 +360,7 @@ impl App {
 
     pub fn toggle_device_connection(&mut self, id: u32) -> AppResult<()> {
         if self.filter_node_id.is_none() {
+            self.notify("Filter not ready — wait for PipeWire connection");
             return Ok(());
         }
         if self.is_device_connected(id) {
