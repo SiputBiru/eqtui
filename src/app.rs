@@ -56,6 +56,7 @@ impl Default for EqState {
     }
 }
 
+#[allow(clippy::struct_excessive_bools)]
 pub struct App {
     pub running: bool,
     pub config: Arc<Config>,
@@ -71,6 +72,8 @@ pub struct App {
     /// True when null-audio-sink creation failed — the filter runs
     /// but processes silence because no audio source is wired.
     pub null_sink_missing: bool,
+    /// False when `pw-link -I` failed and the source state is unknown.
+    pub null_sink_source_known: bool,
     pub connected_devices: Vec<u32>,
 
     pub eq: EqState,
@@ -131,6 +134,7 @@ impl App {
             cached_peak_r: 0.0,
             null_sink: NullSinkState::NotLoaded,
             null_sink_missing: false,
+            null_sink_source_known: true,
             connected_devices: Vec::new(),
             filter_node_id: None,
             filter_state: FilterState::Unconnected,
@@ -218,6 +222,10 @@ impl App {
             }
             PushEvent::SourceActive { active } => {
                 self.null_sink.set_has_source(active);
+                self.null_sink_source_known = true;
+            }
+            PushEvent::SourceUnknown => {
+                self.null_sink_source_known = false;
             }
             PushEvent::Error { message } => {
                 tracing::error!(%message, "Daemon error");
@@ -408,6 +416,7 @@ impl App {
             cached_peak_r: 0.0,
             null_sink: NullSinkState::NotLoaded,
             null_sink_missing: false,
+            null_sink_source_known: true,
             connected_devices: Vec::new(),
             filter_node_id: None,
             filter_state: FilterState::Unconnected,

@@ -65,16 +65,23 @@ pub(crate) fn remove_device_output_links(filter_id: u32, device_id: u32) {
 }
 
 /// Check whether any `PipeWire` link routes audio INTO the null sink's
-/// `playback_FL` or `playback_FR` ports.  Returns `true` if at least one
-/// audio source is connected to the null-sink input.
-pub(crate) fn check_null_sink_input_source(null_sink_id: u32) -> bool {
-    let Ok(output) = Command::new("pw-link").arg("-I").output() else {
-        return false;
+/// `playback_FL` or `playback_FR` ports.
+///
+/// Returns `Some(true)` if a source is connected, `Some(false)` if no source
+/// is present, and `None` if `pw-link -I` itself failed (e.g. not installed,
+/// `PipeWire` down).
+pub(crate) fn check_null_sink_input_source(null_sink_id: u32) -> Option<bool> {
+    let output = match Command::new("pw-link").arg("-I").output() {
+        Ok(o) => o,
+        Err(e) => {
+            tracing::warn!(%e, "pw-link -I failed — cannot check null sink input source");
+            return None;
+        }
     };
 
     let text = String::from_utf8_lossy(&output.stdout);
-    text.lines().any(|line| {
+    Some(text.lines().any(|line| {
         line.contains(&format!("-> {null_sink_id}:playback_FL"))
             || line.contains(&format!("-> {null_sink_id}:playback_FR"))
-    })
+    }))
 }

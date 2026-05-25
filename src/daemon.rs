@@ -162,6 +162,9 @@ impl DaemonState {
                     active: *has_source,
                 });
             }
+            PwEvent::NullSinkInputUnknown => {
+                self.push_event(PushEvent::SourceUnknown);
+            }
             PwEvent::NullSinkError(msg) => {
                 error!(%msg, "Null sink creation failed — filter will process silence");
                 self.push_event(PushEvent::NullSinkMissing);

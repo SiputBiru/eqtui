@@ -53,7 +53,9 @@ pub fn render_monitoring(app: &App, frame: &mut Frame, area: Rect) {
         ]),
         Line::from(vec![
             Span::raw("Source: "),
-            if app.null_sink.has_source() {
+            if !app.null_sink_source_known {
+                Span::styled("?", Style::default().fg(Color::Yellow))
+            } else if app.null_sink.has_source() {
                 Span::styled("active", Style::default().fg(Color::Green))
             } else {
                 Span::raw("---").dark_gray()
