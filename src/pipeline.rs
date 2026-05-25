@@ -63,14 +63,14 @@ impl Pipeline {
             }
         }
 
-        self.peak_l.store(max_l.to_bits(), Ordering::Relaxed);
-        self.peak_r.store(max_r.to_bits(), Ordering::Relaxed);
+        self.peak_l.store(max_l.to_bits(), Ordering::Release);
+        self.peak_r.store(max_r.to_bits(), Ordering::Release);
     }
 
     pub fn peaks(&self) -> (f32, f32) {
         (
-            f32::from_bits(self.peak_l.load(Ordering::Relaxed)),
-            f32::from_bits(self.peak_r.load(Ordering::Relaxed)),
+            f32::from_bits(self.peak_l.load(Ordering::Acquire)),
+            f32::from_bits(self.peak_r.load(Ordering::Acquire)),
         )
     }
 
