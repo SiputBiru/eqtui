@@ -84,10 +84,10 @@ pub fn parse_peq_str(input: &str) -> Result<PeqPreset, PeqError> {
         }
 
         if let Some(caps) = FILTER_RE.captures(trimmed) {
-            let filter_type = match &caps[1] {
-                "PK" => FilterType::Peak,
-                "LSC" => FilterType::LowShelf,
-                "HSC" => FilterType::HighShelf,
+            let filter_type = match caps.get(1).map(|m| m.as_str()) {
+                Some("PK") => FilterType::Peak,
+                Some("LSC") => FilterType::LowShelf,
+                Some("HSC") => FilterType::HighShelf,
                 _ => continue,
             };
             bands.push(EqBand {
