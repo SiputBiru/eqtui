@@ -28,6 +28,13 @@ pub enum Mode {
     Command,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DaemonConnection {
+    Connected,
+    Reconnecting,
+    Disconnected,
+}
+
 #[derive(Debug, Clone)]
 pub struct EqState {
     pub bypass: bool,
@@ -57,6 +64,7 @@ pub struct App {
 
     pub nodes: Vec<NodeInfo>,
     pub pw_connected: bool,
+    pub daemon: DaemonConnection,
     pub filter_node_id: Option<u32>,
     pub filter_state: FilterState,
     pub null_sink: NullSinkState,
@@ -107,6 +115,7 @@ impl App {
             nodes: Vec::new(),
             nodes_selected: 0,
             pw_connected: false,
+            daemon: DaemonConnection::Connected,
             command_input: Input::default(),
             eq: EqState {
                 bands,
@@ -374,6 +383,7 @@ impl App {
             nodes: Vec::new(),
             nodes_selected: 0,
             pw_connected: false,
+            daemon: DaemonConnection::Connected,
             command_input: Input::default(),
             eq: EqState::default(),
             preamp: 0.0,

@@ -8,7 +8,7 @@ use ratatui::symbols;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{self, LineGauge, Paragraph};
 
-use crate::app::{App, Mode};
+use crate::app::{App, DaemonConnection, Mode};
 
 pub fn render_monitoring(app: &App, frame: &mut Frame, area: Rect) {
     let block = widgets::Block::default()
@@ -37,6 +37,20 @@ pub fn render_monitoring(app: &App, frame: &mut Frame, area: Rect) {
 
     let stats = vec![
         Line::from(vec![Span::raw("Core: "), pw_status]),
+        Line::from(vec![
+            Span::raw("Daemon: "),
+            match app.daemon {
+                DaemonConnection::Connected => {
+                    Span::styled("Connected", Style::default().fg(Color::Green))
+                }
+                DaemonConnection::Reconnecting => {
+                    Span::styled("Reconnecting...", Style::default().fg(Color::Yellow).bold())
+                }
+                DaemonConnection::Disconnected => {
+                    Span::styled("Disconnected", Style::default().fg(Color::Red).bold())
+                }
+            },
+        ]),
         Line::from(vec![
             Span::raw("Source: "),
             if app.null_sink.has_source() {

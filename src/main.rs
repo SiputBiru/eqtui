@@ -4,6 +4,7 @@
 use std::io;
 use std::os::unix::fs::OpenOptionsExt;
 use std::sync::Arc;
+use std::time::Duration;
 
 use ratatui::backend::CrosstermBackend;
 use tracing_error::ErrorLayer;
@@ -11,7 +12,7 @@ use tracing_subscriber::prelude::*;
 
 use eqtui::{
     AppResult,
-    app::App,
+    app::{App, DaemonConnection},
     cli,
     client::DaemonClient,
     config::Config,
@@ -133,21 +134,44 @@ fn run_tui_attach() -> AppResult<()> {
 
     while app.running {
         if let Err(e) = app.drain_events() {
-            tracing::warn!(%e, "Daemon connection lost — attempting reconnect");
+            tracing::warn!(%e, "Daemon connection lost — reconnecting with backoff");
             app.notify("Daemon disconnected — reconnecting...");
-            // Render the notification before blocking on reconnect.
+            app.daemon = DaemonConnection::Reconnecting;
             tui.draw(|frame| tui::render(&app, frame))?;
-            match app.reconnect() {
-                Ok(()) => {
-                    tracing::info!("Reconnected to daemon");
-                    app.notify("Reconnected — bands and preamp restored");
+
+            let mut delay = Duration::from_secs(1);
+            let max_delay = Duration::from_secs(8);
+            let max_total = Duration::from_secs(30);
+            let start = std::time::Instant::now();
+
+            let reconnected = loop {
+                match app.reconnect() {
+                    Ok(()) => break true,
+                    Err(e) => {
+                        if start.elapsed() >= max_total {
+                            tracing::error!(%e, "Reconnect failed after 30s");
+                            app.notify(format!("Reconnect failed: {e}"));
+                            break false;
+                        }
+                        tracing::warn!(%e, "Reconnect failed — retrying in {delay:?}");
+                        app.notify(format!("Reconnecting in {}s...", delay.as_secs()));
+                        tui.draw(|frame| tui::render(&app, frame))?;
+                        std::thread::sleep(delay);
+                        delay = (delay * 2).min(max_delay);
+                    }
                 }
-                Err(e) => {
-                    tracing::error!(%e, "Reconnect failed");
-                    app.notify(format!("Reconnect failed: {e}"));
-                    app.running = false;
-                    break;
-                }
+            };
+
+            if reconnected {
+                app.daemon = DaemonConnection::Connected;
+                tracing::info!("Reconnected to daemon");
+                app.notify("Reconnected — bands and preamp restored");
+            } else {
+                app.daemon = DaemonConnection::Disconnected;
+                app.notify("Connection lost — exiting");
+                tui.draw(|frame| tui::render(&app, frame))?;
+                app.running = false;
+                break;
             }
         }
 
