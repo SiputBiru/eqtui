@@ -152,38 +152,14 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
                 return;
             }
             let b = &mut app.eq.bands[app.eq.band_selected];
-            match app.eq.column_selected {
-                1 => b.frequency = (b.frequency + 50.0).min(20000.0),
-                2 => b.gain += 0.5,
-                3 => b.q = (b.q + 0.1).min(10.0),
-                4 => {
-                    b.filter_type = match b.filter_type {
-                        FilterType::Peak => FilterType::LowShelf,
-                        FilterType::LowShelf => FilterType::HighShelf,
-                        FilterType::HighShelf => FilterType::Peak,
-                    };
-                }
-                _ => {}
-            }
+            bump_band(b, app.eq.column_selected, 1);
         }
         KeyCode::Char('-') => {
             if app.eq.bands.is_empty() {
                 return;
             }
             let b = &mut app.eq.bands[app.eq.band_selected];
-            match app.eq.column_selected {
-                1 => b.frequency = (b.frequency - 50.0).max(20.0),
-                2 => b.gain -= 0.5,
-                3 => b.q = (b.q - 0.1).max(0.1),
-                4 => {
-                    b.filter_type = match b.filter_type {
-                        FilterType::Peak => FilterType::HighShelf,
-                        FilterType::LowShelf => FilterType::Peak,
-                        FilterType::HighShelf => FilterType::LowShelf,
-                    };
-                }
-                _ => {}
-            }
+            bump_band(b, app.eq.column_selected, -1);
         }
         _ => {}
     }
@@ -192,6 +168,34 @@ fn handle_pipeline(key: KeyEvent, app: &mut App) {
         KeyCode::Char(c) => Some(c),
         _ => None,
     };
+}
+
+/// Adjusts a band parameter by a delta direction (`dir`: +1 or -1).
+/// Column 1 = frequency, 2 = gain, 3 = Q, 4 = filter type cycle.
+fn bump_band(band: &mut EqBand, col: usize, dir: i8) {
+    match col {
+        1 => band.frequency = (band.frequency + 50.0 * f32::from(dir)).clamp(20.0, 20000.0),
+        2 => band.gain += 0.5 * f32::from(dir),
+        3 => band.q = (band.q + 0.1 * f32::from(dir)).clamp(0.1, 10.0),
+        4 => {
+            const CYCLE: [FilterType; 3] = [
+                FilterType::Peak,
+                FilterType::LowShelf,
+                FilterType::HighShelf,
+            ];
+            let idx = CYCLE
+                .iter()
+                .position(|t| *t == band.filter_type)
+                .unwrap_or(0);
+            // +1 forward, -1 backward (+2 ≡ -1 mod 3)
+            band.filter_type = CYCLE[match dir {
+                1 => (idx + 1) % 3,
+                -1 => (idx + 2) % 3,
+                _ => idx,
+            }];
+        }
+        _ => {}
+    }
 }
 
 fn handle_command_bar(_key: KeyEvent, app: &mut App) {

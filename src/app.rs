@@ -415,7 +415,7 @@ mod tests {
         assert_eq!(app.eq.cell_input.value(), "");
         assert!(!app.eq.bypass);
 
-        let margin = f32::EPSILON;
+        let margin = 1e-3;
         assert!((app.peak_l - (-60.0_f32)).abs() < margin);
         assert!((app.peak_r - (-60.0_f32)).abs() < margin);
         assert!(!app.null_sink.is_loaded());

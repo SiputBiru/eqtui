@@ -25,41 +25,89 @@ pub struct Keys {
 
 #[derive(Deserialize, Debug)]
 pub struct NormalKeys {
-    #[serde(default = "default_add_band")]
+    #[serde(default = "NormalKeys::default_add_band")]
     pub add_band: char,
-    #[serde(default = "default_delete_band")]
+    #[serde(default = "NormalKeys::default_delete_band")]
     pub delete_band: char,
-    #[serde(default = "default_insert_mode")]
+    #[serde(default = "NormalKeys::default_insert_mode")]
     pub insert_mode: char,
-    #[serde(default = "default_command_mode")]
+    #[serde(default = "NormalKeys::default_command_mode")]
     pub command_mode: char,
-    #[serde(default = "default_visual_mode")]
+    #[serde(default = "NormalKeys::default_visual_mode")]
     pub visual_mode: char,
-    #[serde(default = "default_toggle_bypass")]
+    #[serde(default = "NormalKeys::default_toggle_bypass")]
     pub toggle_bypass: char,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct InsertKeys {
-    #[serde(default = "default_confirm")]
+    #[serde(default = "InsertKeys::default_confirm")]
     pub confirm: char,
-    #[serde(default = "default_cancel")]
+    #[serde(default = "InsertKeys::default_cancel")]
     pub cancel: char,
-    #[serde(default = "default_bump_up")]
+    #[serde(default = "InsertKeys::default_bump_up")]
     pub bump_up: char,
-    #[serde(default = "default_bump_down")]
+    #[serde(default = "InsertKeys::default_bump_down")]
     pub bump_down: char,
+}
+
+impl NormalKeys {
+    pub const DEFAULT_ADD_BAND: char = 'a';
+    pub const DEFAULT_DELETE_BAND: char = 'd';
+    pub const DEFAULT_INSERT_MODE: char = 'i';
+    pub const DEFAULT_COMMAND_MODE: char = ':';
+    pub const DEFAULT_VISUAL_MODE: char = 'v';
+    pub const DEFAULT_TOGGLE_BYPASS: char = 'b';
+
+    fn default_add_band() -> char {
+        Self::DEFAULT_ADD_BAND
+    }
+    fn default_delete_band() -> char {
+        Self::DEFAULT_DELETE_BAND
+    }
+    fn default_insert_mode() -> char {
+        Self::DEFAULT_INSERT_MODE
+    }
+    fn default_command_mode() -> char {
+        Self::DEFAULT_COMMAND_MODE
+    }
+    fn default_visual_mode() -> char {
+        Self::DEFAULT_VISUAL_MODE
+    }
+    fn default_toggle_bypass() -> char {
+        Self::DEFAULT_TOGGLE_BYPASS
+    }
+}
+
+impl InsertKeys {
+    pub const DEFAULT_CONFIRM: char = '\n';
+    pub const DEFAULT_CANCEL: char = '\x1b';
+    pub const DEFAULT_BUMP_UP: char = '+';
+    pub const DEFAULT_BUMP_DOWN: char = '-';
+
+    fn default_confirm() -> char {
+        Self::DEFAULT_CONFIRM
+    }
+    fn default_cancel() -> char {
+        Self::DEFAULT_CANCEL
+    }
+    fn default_bump_up() -> char {
+        Self::DEFAULT_BUMP_UP
+    }
+    fn default_bump_down() -> char {
+        Self::DEFAULT_BUMP_DOWN
+    }
 }
 
 impl Default for NormalKeys {
     fn default() -> Self {
         Self {
-            add_band: 'a',
-            delete_band: 'd',
-            insert_mode: 'i',
-            command_mode: ':',
-            visual_mode: 'v',
-            toggle_bypass: 'b',
+            add_band: Self::DEFAULT_ADD_BAND,
+            delete_band: Self::DEFAULT_DELETE_BAND,
+            insert_mode: Self::DEFAULT_INSERT_MODE,
+            command_mode: Self::DEFAULT_COMMAND_MODE,
+            visual_mode: Self::DEFAULT_VISUAL_MODE,
+            toggle_bypass: Self::DEFAULT_TOGGLE_BYPASS,
         }
     }
 }
@@ -67,48 +115,16 @@ impl Default for NormalKeys {
 impl Default for InsertKeys {
     fn default() -> Self {
         Self {
-            confirm: '\n',  // Enter
-            cancel: '\x1b', // Esc
-            bump_up: '+',
-            bump_down: '-',
+            confirm: Self::DEFAULT_CONFIRM,
+            cancel: Self::DEFAULT_CANCEL,
+            bump_up: Self::DEFAULT_BUMP_UP,
+            bump_down: Self::DEFAULT_BUMP_DOWN,
         }
     }
 }
 
 fn default_layout() -> Flex {
     Flex::SpaceBetween
-}
-
-fn default_add_band() -> char {
-    'a'
-}
-fn default_delete_band() -> char {
-    'd'
-}
-fn default_insert_mode() -> char {
-    'i'
-}
-fn default_command_mode() -> char {
-    ':'
-}
-fn default_visual_mode() -> char {
-    'v'
-}
-fn default_toggle_bypass() -> char {
-    'b'
-}
-
-fn default_confirm() -> char {
-    '\n'
-}
-fn default_cancel() -> char {
-    '\x1b'
-}
-fn default_bump_up() -> char {
-    '+'
-}
-fn default_bump_down() -> char {
-    '-'
 }
 
 impl Config {

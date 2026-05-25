@@ -60,53 +60,36 @@ pub fn load() -> Vec<Profile> {
         }
         pf.profiles.truncate(PROFILE_COUNT);
 
-        // Update profiles from external files if path is set.
-        // This ensures profiles linked to files are always up-to-date on load.
-        for profile in &mut pf.profiles {
-            if let Some(ref path) = profile.path {
-                let full_path = resolve_path(path);
-                match crate::autoeq::parse_peq(&full_path) {
-                    Ok(preset) => {
-                        profile.bands = preset.bands;
-                        profile.preamp = preset.preamp;
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to load external profile from {}: {}",
-                            full_path.display(),
-                            e
-                        );
-                    }
-                }
-            }
-        }
+        update_external_profiles(&mut pf.profiles);
 
         pf.profiles
     } else {
         let mut defaults = ProfilesFile::default();
+        update_external_profiles(&mut defaults.profiles);
+        let _ = save_raw(&defaults, &path);
+        defaults.profiles
+    }
+}
 
-        // Update profiles from external files if path is set.
-        for profile in &mut defaults.profiles {
-            if let Some(ref path) = profile.path {
-                let full_path = resolve_path(path);
-                match crate::autoeq::parse_peq(&full_path) {
-                    Ok(preset) => {
-                        profile.bands = preset.bands;
-                        profile.preamp = preset.preamp;
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to load external profile from {}: {}",
-                            full_path.display(),
-                            e
-                        );
-                    }
+/// Updates profiles that are linked to external PEQ files.
+fn update_external_profiles(profiles: &mut [Profile]) {
+    for profile in profiles.iter_mut() {
+        if let Some(ref path) = profile.path {
+            let full_path = resolve_path(path);
+            match crate::autoeq::parse_peq(&full_path) {
+                Ok(preset) => {
+                    profile.bands = preset.bands;
+                    profile.preamp = preset.preamp;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to load external profile from {}: {}",
+                        full_path.display(),
+                        e
+                    );
                 }
             }
         }
-
-        let _ = save_raw(&defaults, &path);
-        defaults.profiles
     }
 }
 

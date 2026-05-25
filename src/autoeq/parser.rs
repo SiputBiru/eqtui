@@ -3,6 +3,7 @@
 
 use std::fs;
 use std::path::Path;
+use std::sync::LazyLock;
 
 use regex::Regex;
 
@@ -52,13 +53,17 @@ pub fn parse_peq(path: &Path) -> Result<PeqPreset, PeqError> {
     parse_peq_str(&fs::read_to_string(path)?)
 }
 
-pub fn parse_peq_str(input: &str) -> Result<PeqPreset, PeqError> {
-    let preamp_re = Regex::new(r"^Preamp:\s+([-.\d]+)\s*dB").unwrap();
-    let filter_re = Regex::new(
+static PREAMP_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^Preamp:\s+([-.\d]+)\s*dB").unwrap());
+
+static FILTER_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
         r"Filter\s+\d+:\s+ON\s+(PK|LSC|HSC)\s+Fc\s+([\d.]+)\s+Hz\s+Gain\s+([-\d.]+)\s+dB\s+Q\s+([\d.]+)",
     )
-    .unwrap();
+    .unwrap()
+});
 
+pub fn parse_peq_str(input: &str) -> Result<PeqPreset, PeqError> {
     let mut preamp: Option<f32> = None;
     let mut bands = Vec::new();
 
@@ -68,7 +73,7 @@ pub fn parse_peq_str(input: &str) -> Result<PeqPreset, PeqError> {
             continue;
         }
 
-        if let Some(caps) = preamp_re.captures(trimmed) {
+        if let Some(caps) = PREAMP_RE.captures(trimmed) {
             let raw = caps[1].to_string();
             let gain: f32 = raw.parse().map_err(|_| PeqError::InvalidPreamp {
                 line: lineno + 1,
@@ -78,7 +83,7 @@ pub fn parse_peq_str(input: &str) -> Result<PeqPreset, PeqError> {
             continue;
         }
 
-        if let Some(caps) = filter_re.captures(trimmed) {
+        if let Some(caps) = FILTER_RE.captures(trimmed) {
             let filter_type = match &caps[1] {
                 "PK" => FilterType::Peak,
                 "LSC" => FilterType::LowShelf,
