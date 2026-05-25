@@ -364,15 +364,15 @@ impl App {
             return Ok(());
         }
         if self.is_device_connected(id) {
-            self.connected_devices.retain(|d| *d != id);
             if let Some(client) = &mut self.client {
                 client.disconnect_device(id)?;
             }
+            self.connected_devices.retain(|d| *d != id);
         } else {
-            self.connected_devices.push(id);
             if let Some(client) = &mut self.client {
                 client.connect_device(id)?;
             }
+            self.connected_devices.push(id);
         }
         Ok(())
     }
