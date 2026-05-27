@@ -113,10 +113,9 @@ impl DaemonState {
     pub fn handle_pw_event(&self, event: PwEvent) {
         match &event {
             PwEvent::NodeList(nodes) => {
-                (*self.nodes.lock().unwrap()).clone_from(nodes);
-                self.push_event(PushEvent::NodeList {
-                    nodes: nodes.clone(),
-                });
+                let nodes = nodes.clone();
+                (*self.nodes.lock().unwrap()).clone_from(&nodes);
+                self.push_event(PushEvent::NodeList { nodes });
             }
             PwEvent::Connected => {
                 *self.pw_connected.lock().unwrap() = true;

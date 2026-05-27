@@ -74,7 +74,7 @@ pub fn parse_peq_str(input: &str) -> Result<PeqPreset, PeqError> {
         }
 
         if let Some(caps) = PREAMP_RE.captures(trimmed) {
-            let raw = caps[1].to_string();
+            let raw: String = caps.get(1).map_or("", |m| m.as_str()).to_string();
             let gain: f32 = raw.parse().map_err(|_| PeqError::InvalidPreamp {
                 line: lineno + 1,
                 raw,
