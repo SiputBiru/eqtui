@@ -100,10 +100,10 @@ unsafe extern "C" fn process_cb(data: *mut c_void, position: *mut libspa_sys::sp
         }
         fd.pipeline
             .peak_l
-            .store(max_l.to_bits(), std::sync::atomic::Ordering::Relaxed);
+            .store(max_l.to_bits(), std::sync::atomic::Ordering::Release);
         fd.pipeline
             .peak_r
-            .store(max_r.to_bits(), std::sync::atomic::Ordering::Relaxed);
+            .store(max_r.to_bits(), std::sync::atomic::Ordering::Release);
     }
 }
 
