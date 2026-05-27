@@ -387,11 +387,11 @@ pub fn run(mut lock_file: std::fs::File) -> crate::AppResult<()> {
             while let Ok(event) = pw_rx.recv() {
                 bridge_state.handle_pw_event(event);
             }
-            if bridge_state.shutting_down.load(Ordering::Relaxed) {
+            if bridge_state.shutting_down.load(Ordering::Acquire) {
                 info!("PW thread terminated cleanly");
             } else {
                 error!("PW event channel closed unexpectedly — shutting down daemon");
-                bridge_state.shutting_down.store(true, Ordering::Relaxed);
+                bridge_state.shutting_down.store(true, Ordering::Release);
                 // Unblock the accept loop so the daemon can exit on unexpected PW death.
                 if let Err(e) = std::os::unix::net::UnixStream::connect(&bridge_socket) {
                     debug!(%e, "Failed to connect to socket to unblock accept loop");
@@ -405,7 +405,7 @@ pub fn run(mut lock_file: std::fs::File) -> crate::AppResult<()> {
         .spawn(move || {
             loop {
                 thread::sleep(Duration::from_millis(66));
-                if peak_state.shutting_down.load(Ordering::Relaxed) {
+                if peak_state.shutting_down.load(Ordering::Acquire) {
                     break;
                 }
                 let (l, r) = peak_state.pipeline.peaks();
@@ -685,7 +685,7 @@ fn dispatch_request(
 
         Request::Shutdown => {
             info!("Shutdown requested by client");
-            state.shutting_down.store(true, Ordering::Relaxed);
+            state.shutting_down.store(true, Ordering::Release);
             let _ = cmd_tx.send(PwCommand::Terminate);
             // Connect to the socket to wake up the blocked incoming() loop so main can exit.
             if let Ok(path) = socket_path() {
