@@ -134,13 +134,15 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
                 std::thread::sleep(Duration::from_millis(500));
                 let ns_id = ns_checker.load(Ordering::Acquire);
                 if ns_id > 0 {
-                    match check_null_sink_input_source(ns_id) {
-                        Some(has_source) => {
-                            let _ = ns_checker_tx.send(PwEvent::NullSinkInputState { has_source });
-                        }
-                        None => {
-                            let _ = ns_checker_tx.send(PwEvent::NullSinkInputUnknown);
-                        }
+                    let has_source = check_null_sink_input_source(ns_id);
+                    let event = match has_source {
+                        Some(true) => PwEvent::NullSinkInputState { has_source: true },
+                        Some(false) => PwEvent::NullSinkInputState { has_source: false },
+                        None => PwEvent::NullSinkInputUnknown,
+                    };
+                    // Exit cleanly when the receiver is dropped (daemon shutting down)
+                    if ns_checker_tx.send(event).is_err() {
+                        break;
                     }
                 }
             }

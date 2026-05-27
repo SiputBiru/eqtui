@@ -40,6 +40,10 @@ use crate::state::{EqBand, FilterState, NodeInfo, NullSinkState, PwCommand, PwEv
 /// This protects against resource exhaustion `DoS` (thread/memory leakage).
 const MAX_CLIENTS: usize = 10;
 
+/// Maximum number of EQ bands a client can set in a single `SetBands` request.
+/// Prevents memory/CPU exhaustion from oversized band lists.
+const MAX_BANDS: usize = 32;
+
 /// Set by the SIGTERM / SIGINT signal handler.  Polled by the
 /// signal-watcher thread and the accept loop so the daemon can
 /// perform a clean shutdown (destroy `PipeWire` nodes, remove socket)
@@ -548,6 +552,12 @@ fn handle_client(
 
     state.register_client(&stream, client_id);
 
+    // Sliding-window rate limiter: up to 200 requests per 10-second window.
+    // Prevents a single client from saturating the daemon's CPU via spam.
+    const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(10);
+    const RATE_LIMIT_MAX: usize = 200;
+    let mut request_times: Vec<std::time::Instant> = Vec::new();
+
     let reader = BufReader::new(read_stream);
     for line in reader.lines() {
         let Ok(line) = line else { break };
@@ -556,6 +566,21 @@ fn handle_client(
         if trimmed.is_empty() {
             continue;
         }
+
+        // Rate limit check — prune old entries, then reject if over limit.
+        let now = std::time::Instant::now();
+        request_times.retain(|t| now.duration_since(*t) < RATE_LIMIT_WINDOW);
+        if request_times.len() >= RATE_LIMIT_MAX {
+            let _ = send_resp(
+                &stream,
+                Response::error(&format!(
+                    "Rate limit exceeded ({RATE_LIMIT_MAX} req per {}s)",
+                    RATE_LIMIT_WINDOW.as_secs(),
+                )),
+            );
+            continue;
+        }
+        request_times.push(now);
 
         let req: Request = match serde_json::from_str(trimmed) {
             Ok(r) => r,
@@ -586,6 +611,9 @@ fn dispatch_request(
 
         Request::SetBands { bands } => {
             let count = bands.len();
+            if count > MAX_BANDS {
+                return Response::error(&format!("Too many bands (max {MAX_BANDS}, got {count})"));
+            }
             (*state.eq_bands.lock().unwrap()).clone_from(&bands);
             let _ = cmd_tx.send(PwCommand::UpdateEq { bands });
             info!(count, "Bands queued for EQ update");
