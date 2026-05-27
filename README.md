@@ -13,6 +13,10 @@ Built with [Ratatui](https://ratatui.rs).
 want a simple EQ — not a full DSP pipeline with a GTK or Qt UI.<br>
 And also i just want to learn little bit about DSP stuff.
 
+The biquad filter implementation follows the excellent
+[Audio EQ Cookbook](https://www.w3.org/TR/2021/NOTE-audio-eq-cookbook-20210608/)
+by Robert Bristow-Johnson (W3C)
+
 Runs as a background daemon so the EQ keeps going even after closing the TUI.
 
 ## Quick Start
