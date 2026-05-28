@@ -8,11 +8,12 @@
 //! between its mpsc/pipewire-channel interface and the shared
 //! `DaemonState` that socket handlers read and mutate.
 
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -33,8 +34,8 @@ use crate::pipeline::{Pipeline, SAMPLE_RATE};
 const DEV_NULL: *const libc::c_char = c"/dev/null".as_ptr();
 
 use crate::protocol::{DaemonStatus, PushEvent, Request, Response};
-use crate::pw;
 use crate::state::{EqBand, FilterState, NodeInfo, NullSinkState, PwCommand, PwEvent};
+use crate::{AppResult, pw};
 
 /// Maximum number of concurrent client connections allowed.
 /// This protects against resource exhaustion `DoS` (thread/memory leakage).
@@ -748,4 +749,38 @@ pub fn runtime_dir() -> crate::AppResult<PathBuf> {
         )
         .into()),
     }
+}
+
+/// Start the saemon: set up stdout/stderr, acquire lock, daemonize run.
+pub fn run_daemon(log_dir: &Path) -> AppResult<()> {
+    let stdout = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_dir.join("eqtui.out"))?;
+
+    let stderr = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_dir.join("eqtui.err"))?;
+
+    let lock_path = lock_path()?;
+    let lock_file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .custom_flags(libc::O_CLOEXEC)
+        .open(&lock_path)?;
+
+    if let Err(e) = lock_file.try_lock() {
+        eprintln!("Daemon already running. Use `eqtui stop` to stop it first.");
+        tracing::error!(%e, "Failed to acquire daemon lock; another instance might be running");
+        std::process::exit(1);
+    }
+
+    if let Err(e) = init(stdout, stderr, lock_file.try_clone()?) {
+        eprintln!("Error starting daemon: {e}");
+        std::process::exit(1);
+    }
+    tracing::info!("Daemonized successfully");
+    run(lock_file)
 }

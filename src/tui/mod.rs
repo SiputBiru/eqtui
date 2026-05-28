@@ -3,6 +3,9 @@
 
 use std::io;
 use std::panic;
+use std::sync::Arc;
+use std::time;
+use std::time::Duration;
 
 use crossterm::cursor;
 use crossterm::event::DisableMouseCapture;
@@ -12,8 +15,12 @@ use ratatui::backend::Backend;
 use ratatui::layout::{Constraint, Layout};
 
 use crate::AppResult;
-use crate::app::App;
+use crate::app::{App, DaemonConnection};
+use crate::client::DaemonClient;
+use crate::config::Config;
+use crate::event;
 use crate::event::EventHandler;
+use crate::handler;
 
 pub mod devices;
 pub mod eq_table;
@@ -92,4 +99,83 @@ pub fn render(app: &App, frame: &mut ratatui::Frame) {
     status::render_hints(app, frame, hint_area);
 
     graph::render(app, frame, main_view_area);
+}
+
+/// Attach the TUI to the daemon and enter the main event loop
+pub fn attach() -> AppResult<()> {
+    tracing::info!("Connecting to daemon...");
+    let client = DaemonClient::connect()?;
+
+    let config = Arc::new(Config::new(None));
+    let mut app = App::new(config, client);
+
+    if let Err(e) = app.full_sync() {
+        tracing::warn!(%e, "Initial full_sync failed - starting with defaults");
+    }
+
+    let backend = ratatui::backend::CrosstermBackend::new(io::stdout());
+
+    let terminal = ratatui::Terminal::new(backend)?;
+    let events = EventHandler::new();
+    let mut tui = Tui::new(terminal, events);
+    tui.init()?;
+
+    tracing::info!("Entering TUI main loop");
+
+    while app.running {
+        if let Err(e) = app.drain_events() {
+            tracing::warn!(%e, "Daemon connection lost - reconnecting with backoff");
+
+            app.notify("Daemon disconnected - reconnecting...");
+            app.daemon = DaemonConnection::Reconnecting;
+
+            tui.draw(|frame| render(&app, frame))?;
+
+            let mut delay = Duration::from_secs(1);
+            let max_delay = Duration::from_secs(8);
+            let max_total = Duration::from_secs(30);
+            let start = time::Instant::now();
+
+            let reconnected = loop {
+                match app.reconnect() {
+                    Ok(()) => break true,
+                    Err(e) => {
+                        if start.elapsed() >= max_total {
+                            tracing::error!(%e, "Reconnect failed after 30s");
+                            app.notify(format!("Reconnect failed: {e}"));
+                            break false;
+                        }
+                        tracing::warn!(%e, "Reconnect failed — retrying in {delay:?}");
+                        app.notify(format!("Reconnecting in {}s...", delay.as_secs()));
+                        tui.draw(|frame| render(&app, frame))?;
+                        std::thread::sleep(delay);
+                        delay = (delay * 2).min(max_delay);
+                    }
+                }
+            };
+
+            if reconnected {
+                app.daemon = DaemonConnection::Connected;
+                tracing::info!("Reconnected to daemon");
+                app.notify("Reconnected - bands and preamp restored");
+            } else {
+                app.daemon = DaemonConnection::Disconnected;
+                app.notify("Connection lost - exiting");
+                tui.draw(|frame| render(&app, frame))?;
+                break;
+            }
+        }
+
+        match tui.events.next()? {
+            event::Event::Tick => app.tick(),
+            event::Event::Key(key) => handler::dispatch(key, &mut app),
+            event::Event::Resize(_, _) => {}
+        }
+
+        tui.draw(|frame| render(&app, frame))?;
+    }
+
+    tui.exit()?;
+    tracing::info!("TUI exited - daemon keeps running");
+    Ok(())
 }

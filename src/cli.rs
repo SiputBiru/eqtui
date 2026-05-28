@@ -4,12 +4,14 @@
 //! Fire-and-forget CLI subcommands that connect to the daemon,
 //! send a single request, and exit.
 
+use std::path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use crate::AppResult;
 use crate::autoeq::parse_peq;
 use crate::client::DaemonClient;
+use crate::tui;
+use crate::{AppResult, daemon};
 
 /// Stop the running daemon.
 pub fn run_stop() -> AppResult<()> {
@@ -63,4 +65,41 @@ pub fn run_load(args: &[String]) -> AppResult<()> {
         preset.preamp
     );
     Ok(())
+}
+
+/// Print CLI usage information
+pub fn print_usage() {
+    eprintln!(
+        "\
+Usage: eqtui <command>
+Commands:
+  daemon             Start the background daemon
+  attach             Attach TUI to running daemon (default)
+  stop               Stop the daemon
+  restart            Restart the daemon
+  load <file>        Load a PEQ preset file
+Options:
+  -h, --help         Show this help
+  -V, --version      Print version
+"
+    );
+}
+
+/// Route CLI commands and TUI attach to respective handlers
+pub fn dispatch(mode: &str, args: &[String], log_dir: &path::Path) -> AppResult<()> {
+    match mode {
+        "-h" | "--help" => {
+            print_usage();
+            Ok(())
+        }
+        "-V" | "--version" => {
+            println!("eqtui v{}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
+        "daemon" => daemon::run_daemon(log_dir),
+        "stop" => run_stop(),
+        "restart" => run_restart(),
+        "load" => run_load(args),
+        _ => tui::attach(),
+    }
 }
