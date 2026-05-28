@@ -2,7 +2,7 @@
 name = "eqtui"
 version = "0.1.1-alpha.6"
 description = "Terminal-native(TUI) audio effects processor for PipeWire"
-authors = ["SiputBiru <hillsforrest03@gmail.com>"]
+authors = ["SiputBiru <radityamahatma23@gmail.com>"]
 license = "GPL-2.0-only"
 repository = "https://github.com/SiputBiru/eqtui"
 readme = "README.md"
