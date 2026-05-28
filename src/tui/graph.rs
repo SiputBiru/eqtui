@@ -72,11 +72,17 @@ pub fn render(_app: &App, frame: &mut Frame, area: Rect) {
     ];
 
     let target_data: Vec<(f64, f64)> = target_raw.iter().map(|(f, g)| (f.log10(), *g)).collect();
+    let ref_line: Vec<(f64, f64)> = vec![(20.0f64.log10(), 75.0), (20000.0f64.log10(), 75.0)];
 
     let datasets = vec![
         Dataset::default()
+            .name("75dB Ref")
+            .marker(symbols::Marker::Braille)
+            .graph_type(GraphType::Line)
+            .style(Style::default().dark_gray().not_bold())
+            .data(&ref_line),
+        Dataset::default()
             .name("PEQdB Diamond β Target")
-            // .marker(symbols::Marker::Braille)
             .marker(symbols::Marker::Braille)
             .graph_type(GraphType::Line)
             .style(Style::default().magenta().bold())
