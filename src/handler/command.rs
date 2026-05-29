@@ -75,13 +75,10 @@ fn exec(cmd: &str, app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use std::sync::Arc;
 
     fn setup_app() -> App {
-        let config = Arc::new(Config::default());
-        App::new_test(config)
+        App::new_test()
     }
 
     #[test]

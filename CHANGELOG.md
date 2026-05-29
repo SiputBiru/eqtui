@@ -4,6 +4,54 @@ All notable changes to eqtui are documented here.
 
 ---
 
+## [0.1.1-alpha.7] — 2026-05-29
+
+### Debloat — `daemon.rs`
+
+- **Removed double-fork daemonization** (`init()`). The daemon no longer
+  performs POSIX double-fork — it runs as a normal foreground process
+  spawned by the TUI or systemd.
+- **Removed state persistence** (`save_state`/`restore_state`). The daemon
+  no longer auto-saves EQ bands, preamp, or bypass to `state.toml` on
+  every change.
+- **Removed signal handler + watcher thread**. Clean shutdown is handled
+  by a single `AtomicBool` checked in the accept loop.
+- **Removed rate limiter** from client handler (unnecessary for local socket).
+- **Removed peer credentials check** (`uds` dependency). `$XDG_RUNTIME_DIR`
+  already enforces user isolation.
+- **Removed `MAX_CLIENTS` limit** and `MAX_BANDS` validation.
+- **Removed `catch_unwind` wrapper** — panics propagate naturally.
+- **Removed `Response` helpers** and `send_resp()` — inlined.
+- **Merged `run()` + `init()` + `run_daemon()`** into a single
+  `run_daemon()` entry point.
+- **File shrunk from 786 lines to 532 lines** (−32%).
+
+### Debloat — `config.rs` (removed)
+
+- **Deleted `config.rs`** (153 lines). The config system was dead code:
+  `Config` was deserialized from `~/.config/eqtui/config.toml` but
+  **never read** by any key handler. Handlers used hardcoded keys directly.
+  Removing it eliminates `serde::Deserialize` usage in this module and
+  simplifies the startup path.
+- Removed `pub config: Arc<Config>` field from `App` struct.
+- Simplified `App::new(client)` and `App::new_test()` signatures.
+- Updated handler tests to use `App::new_test()` without config.
+- Updated README to remove config.toml references and "Customizing Keys"
+  section.
+- **Saves 153 lines + `toml` serde overhead.**
+
+### Debloat — dependencies (`regex` removed)
+
+- **Replaced `regex` crate with manual string parsing** in `autoeq/parser.rs`.
+  The two regex patterns (`^Preamp:\s+...` and `Filter\s+\d+:\s+ON\s+...`)
+  were replaced with `strip_prefix`, `strip_suffix`, `split`, and
+  `split_whitespace` — roughly the same LOC, zero external dependencies.
+- **Removed `regex = "1.12.3"` from `Cargo.toml`** — drops the transitive
+  dependency tree (`regex-automata`, `regex-syntax`, `aho-corasick`,
+  `memchr`), speeding up compile times and shrinking the binary.
+
+---
+
 ## [0.1.1-alpha.6] — 2026-05-25
 
 ### Audio Engine

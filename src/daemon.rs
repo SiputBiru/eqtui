@@ -3,14 +3,9 @@
 
 //! Daemon process — owns the `PipeWire` audio pipeline and serves
 //! TUI/CLI clients over a Unix-domain socket.
-//!
-//! The daemon keeps `pw::run` untouched; a bridge thread translates
-//! between its mpsc/pipewire-channel interface and the shared
-//! `DaemonState` that socket handlers read and mutate.
 
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -22,39 +17,13 @@ use std::sync::{
 use std::thread;
 use std::time::Duration;
 
-use libc::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
 use pipewire::channel;
-use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
-use uds::UnixStreamExt;
 
 use crate::pipeline::{Pipeline, SAMPLE_RATE};
-
-// Constants for standard stream redirection and file modes.
-const DEV_NULL: *const libc::c_char = c"/dev/null".as_ptr();
-
 use crate::protocol::{DaemonStatus, PushEvent, Request, Response};
 use crate::state::{EqBand, FilterState, NodeInfo, NullSinkState, PwCommand, PwEvent};
 use crate::{AppResult, pw};
-
-/// Maximum number of concurrent client connections allowed.
-/// This protects against resource exhaustion `DoS` (thread/memory leakage).
-const MAX_CLIENTS: usize = 10;
-
-/// Maximum number of EQ bands a client can set in a single `SetBands` request.
-/// Prevents memory/CPU exhaustion from oversized band lists.
-const MAX_BANDS: usize = 32;
-
-/// Set by the SIGTERM / SIGINT signal handler.  Polled by the
-/// signal-watcher thread and the accept loop so the daemon can
-/// perform a clean shutdown (destroy `PipeWire` nodes, remove socket)
-/// instead of exiting immediately.
-static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
-
-extern "C" fn handle_signal(_sig: i32) {
-    // Async-signal-safe: store is lock-free, works inside a signal handler.
-    SHUTDOWN_REQUESTED.store(true, Ordering::Release);
-}
 
 pub struct DaemonState {
     pub pipeline: Arc<Pipeline>,
@@ -133,9 +102,6 @@ impl DaemonState {
                     state: format!("filter:{state:?}"),
                 });
 
-                // When PipeWire disconnects, trigger a clean shutdown so
-                // the TUI can auto-launch a fresh daemon that connects to
-                // the (possibly restarted) PipeWire server.
                 if matches!(state, FilterState::Error(_)) {
                     warn!("PipeWire connection lost — shutting down for restart");
                     self.shutting_down.store(true, Ordering::Release);
@@ -182,9 +148,7 @@ impl DaemonState {
                     message: msg.clone(),
                 });
             }
-            PwEvent::NodeAdded(_) | PwEvent::NodeRemoved(_) => {
-                // Not wired yet — periodic NodeList covers the same ground.
-            }
+            PwEvent::NodeAdded(_) | PwEvent::NodeRemoved(_) => {}
         }
     }
 
@@ -225,7 +189,6 @@ impl DaemonState {
 
     pub fn push_event(&self, event: PushEvent) {
         let mut clients = self.clients.lock().unwrap();
-        // Avoid CPU waste when daemon is running in background without connected TUI.
         if clients.is_empty() {
             return;
         }
@@ -241,144 +204,57 @@ impl DaemonState {
     }
 }
 
-// ── State Persistence ──────────────────────────────────────────
+// ── Entry Point ─────────────────────────────────────────────────
 //
-// The daemon's in-memory state (bands, preamp, bypass, connected
-// devices) is periodically saved to `$XDG_DATA_HOME/eqtui/state.toml`
-// so it survives crashes and SIGKILLs.
+// Sets up the lock file, starts the PipeWire pipeline, and listens
+// on a Unix socket for TUI/CLI client connections.
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct StateSnapshot {
-    bands: Vec<EqBand>,
-    preamp: f32,
-    bypass: bool,
-    connected_devices: Vec<u32>,
-}
+pub fn run_daemon(log_dir: &Path) -> AppResult<()> {
+    let log_file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(log_dir.join("eqtui.log"))?;
 
-fn state_path() -> PathBuf {
-    dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("eqtui")
-        .join("state.toml")
-}
+    // Reconfigure tracing to write to the daemon log file.
+    // The main process already set up a file logger, but after
+    // the fork the daemon inherits the same fd.  We reopen so
+    // the daemon has its own independent log.
+    tracing::info!("Daemon starting up");
+    drop(log_file);
 
-fn save_state(state: &DaemonState) {
-    let snap = StateSnapshot {
-        bands: state.eq_bands.lock().unwrap().clone(),
-        preamp: *state.preamp.lock().unwrap(),
-        bypass: *state.bypass.lock().unwrap(),
-        connected_devices: state.connected_devices.lock().unwrap().clone(),
-    };
-    let path = state_path();
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    let _ = fs::write(&path, toml::to_string_pretty(&snap).unwrap_or_default());
-}
+    // Acquire exclusive lock so only one daemon instance runs.
+    let lock_path = lock_path()?;
+    let lock_file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&lock_path)?;
 
-fn restore_state(state: &DaemonState) {
-    let path = state_path();
-    let Ok(contents) = fs::read_to_string(&path) else {
-        return;
-    };
-    let Ok(snap) = toml::from_str::<StateSnapshot>(&contents) else {
-        return;
-    };
-    *state.eq_bands.lock().unwrap() = snap.bands;
-    *state.preamp.lock().unwrap() = snap.preamp;
-    *state.bypass.lock().unwrap() = snap.bypass;
-    *state.connected_devices.lock().unwrap() = snap.connected_devices;
-    state.pipeline.set_preamp(snap.preamp);
-    state.pipeline.set_bypass(snap.bypass);
-}
-
-/// Initializes the process as a daemon using the standard double-fork procedure.
-///
-/// A double fork prevents the daemon from ever re-acquiring a controlling terminal,
-/// which is a requirement for background services on POSIX systems.
-pub fn init(
-    stdout: std::fs::File,
-    stderr: std::fs::File,
-    lock_file: std::fs::File,
-) -> crate::AppResult<()> {
-    unsafe {
-        // First fork to detach from the parent process.
-        let pid = libc::fork();
-        if pid < 0 {
-            return Err(std::io::Error::last_os_error().into());
-        }
-        if pid > 0 {
-            libc::_exit(0);
-        }
-
-        // Create a new session to become the session leader.
-        if libc::setsid() < 0 {
-            return Err(std::io::Error::last_os_error().into());
-        }
-
-        // Second fork to ensure the process is not a session leader and cannot acquire a terminal.
-        let pid = libc::fork();
-        if pid < 0 {
-            return Err(std::io::Error::last_os_error().into());
-        }
-        if pid > 0 {
-            libc::_exit(0);
-        }
-
-        // Set the working directory to root to avoid pinning mount points.
-        libc::chdir(c"/".as_ptr());
-
-        // Set restrictive file permissions for new files.
-        libc::umask(0o027);
-
-        // Redirect standard input to /dev/null.
-        let fd = libc::open(DEV_NULL, libc::O_RDONLY);
-        if fd != -1 {
-            libc::dup2(fd, STDIN_FILENO);
-            libc::close(fd);
-        }
-
-        // Redirect stdout and stderr to the provided log files.
-        libc::dup2(stdout.as_raw_fd(), STDOUT_FILENO);
-        libc::dup2(stderr.as_raw_fd(), STDERR_FILENO);
+    // SAFETY: flock is async-signal-safe. LOCK_NB makes it non-blocking.
+    if unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == -1 {
+        eprintln!("Daemon already running. Use `eqtui stop` to stop it first.");
+        std::process::exit(1);
     }
 
-    // Write the final PID to the lock file for process management.
-    let pid = std::process::id().to_string();
-    let mut f = lock_file;
-    use std::io::{Seek, SeekFrom, Write};
-    f.set_len(0)?;
-    f.seek(SeekFrom::Start(0))?;
-    f.write_all(pid.as_bytes())?;
-    f.flush()?;
-    f.sync_all()?;
-
-    Ok(())
-}
-
-pub fn run(mut lock_file: std::fs::File) -> crate::AppResult<()> {
-    // Write process PID to the lock file so that CLI commands (like stop/load)
-    // can find the daemon. The exclusive lock is already held by the parent and
-    // inherited by the child.
-    use std::io::Write;
-    lock_file.set_len(0)?; // Clear any previous content
-    lock_file.write_all(std::process::id().to_string().as_bytes())?;
-    lock_file.flush()?;
+    // Write PID to lock file for CLI discovery.
+    writeln!(&lock_file, "{}", std::process::id())?;
+    lock_file.sync_all()?;
 
     let socket_path = socket_path()?;
-
     let pipeline = Arc::new(Pipeline::new(SAMPLE_RATE));
     let state = Arc::new(DaemonState::new(pipeline.clone()));
-    restore_state(&state);
 
     let (pw_tx, pw_rx) = mpsc::channel::<PwEvent>();
     let (cmd_tx, cmd_rx) = channel::channel::<PwCommand>();
 
+    // PipeWire mainloop thread — audio processing and graph management.
     let pw_pipeline = pipeline.clone();
     let pw_thread = thread::Builder::new().name("pw".into()).spawn(move || {
         pw::run(pw_tx, cmd_rx, pw_pipeline);
     })?;
 
+    // Bridge thread — forwards PwEvents from PipeWire to the shared state.
     let bridge_state = state.clone();
     let bridge_socket = socket_path.clone();
     thread::Builder::new()
@@ -387,18 +263,16 @@ pub fn run(mut lock_file: std::fs::File) -> crate::AppResult<()> {
             while let Ok(event) = pw_rx.recv() {
                 bridge_state.handle_pw_event(event);
             }
-            if bridge_state.shutting_down.load(Ordering::Acquire) {
-                info!("PW thread terminated cleanly");
-            } else {
+            if !bridge_state.shutting_down.load(Ordering::Acquire) {
                 error!("PW event channel closed unexpectedly — shutting down daemon");
                 bridge_state.shutting_down.store(true, Ordering::Release);
-                // Unblock the accept loop so the daemon can exit on unexpected PW death.
                 if let Err(e) = std::os::unix::net::UnixStream::connect(&bridge_socket) {
                     debug!(%e, "Failed to connect to socket to unblock accept loop");
                 }
             }
         })?;
 
+    // Peak broadcast thread — pushes peak meter updates at ~15 fps.
     let peak_state = state.clone();
     thread::Builder::new()
         .name("peak-broadcast".into())
@@ -422,48 +296,9 @@ pub fn run(mut lock_file: std::fs::File) -> crate::AppResult<()> {
     let listener = UnixListener::bind(&socket_path)?;
     info!("Daemon listening on {}", socket_path.display());
 
-    // Register SIGTERM / SIGINT handlers so the daemon can shut down
-    // cleanly (destroy PipeWire nodes, remove socket file) instead of
-    // exiting immediately and leaving dangling resources.
-    //
-    // Safety: the signal handler only writes to SHUTDOWN_REQUESTED
-    // (lock-free atomic), which is async-signal-safe.  Signal handlers
-    // are process-global, but eqtui never exec()s another process after
-    // daemonization, so they remain in effect for the daemon's lifetime.
-    unsafe {
-        libc::signal(libc::SIGTERM, handle_signal as libc::sighandler_t);
-        libc::signal(libc::SIGINT, handle_signal as libc::sighandler_t);
-        // Ignore SIGHUP (terminal hangup) — the daemon has no terminal.
-        libc::signal(libc::SIGHUP, libc::SIG_IGN);
-    }
-
-    // The accept loop blocks on listener.incoming().  A signal alone
-    // won't unblock it (Rust's std retries EINTR silently), so spawn a
-    // watcher thread that connects to the socket when the flag is set,
-    // waking the listener immediately.
-    let shutdown_socket = socket_path.clone();
-    let _signal_watcher =
-        thread::Builder::new()
-            .name("signal-watcher".into())
-            .spawn(move || {
-                loop {
-                    thread::sleep(Duration::from_millis(100));
-                    if SHUTDOWN_REQUESTED.load(Ordering::Acquire) {
-                        let _ = UnixStream::connect(&shutdown_socket);
-                        break;
-                    }
-                }
-            })?;
-
     let mut client_id_counter: u64 = 0;
 
     for stream in listener.incoming() {
-        // Check both the client-requested shutdown flag and the
-        // signal-triggered flag.  Mirror the signal flag into daemon
-        // state so the bridge and peak threads see it too.
-        if SHUTDOWN_REQUESTED.load(Ordering::Acquire) {
-            state.shutting_down.store(true, Ordering::Release);
-        }
         if state.shutting_down.load(Ordering::Acquire) {
             break;
         }
@@ -475,23 +310,6 @@ pub fn run(mut lock_file: std::fs::File) -> crate::AppResult<()> {
                 continue;
             }
         };
-
-        // Enforce concurrent connection limit to prevent resource exhaustion (DoS).
-        // The length of the clients list is checked before spawning a new handler thread.
-        {
-            let clients = state.clients.lock().unwrap();
-            if clients.len() >= MAX_CLIENTS {
-                warn!(
-                    limit = MAX_CLIENTS,
-                    "Maximum concurrent clients reached; dropping connection"
-                );
-                let _ = send_resp(
-                    &stream,
-                    Response::error("Maximum concurrent clients reached"),
-                );
-                continue;
-            }
-        }
 
         let handler_state = state.clone();
         let handler_cmd_tx = cmd_tx.clone();
@@ -506,7 +324,6 @@ pub fn run(mut lock_file: std::fs::File) -> crate::AppResult<()> {
     }
 
     info!("Daemon shutting down");
-    save_state(&state);
     let _ = cmd_tx.send(PwCommand::Terminate);
     let _ = pw_thread.join();
     let _ = fs::remove_file(&socket_path);
@@ -520,28 +337,6 @@ fn handle_client(
     cmd_tx: channel::Sender<PwCommand>,
     client_id: u64,
 ) {
-    // Verify that the connecting client is the same user as the daemon.
-    // This prevents unauthorized local users from sending commands even if
-    // they have filesystem access to the socket.
-    let creds = match stream.initial_peer_credentials() {
-        Ok(c) => c,
-        Err(e) => {
-            error!(%e, client_id, "Failed to get peer credentials; rejecting connection");
-            return;
-        }
-    };
-
-    let peer_uid = creds.euid();
-    let my_uid = unsafe { libc::getuid() };
-
-    if peer_uid != my_uid {
-        warn!(
-            client_id,
-            peer_uid, my_uid, "Unauthorized connection attempt from different UID; rejecting"
-        );
-        return;
-    }
-
     let read_stream = match stream.try_clone() {
         Ok(s) => s,
         Err(e) => {
@@ -552,12 +347,6 @@ fn handle_client(
 
     state.register_client(&stream, client_id);
 
-    // Sliding-window rate limiter: up to 200 requests per 10-second window.
-    // Prevents a single client from saturating the daemon's CPU via spam.
-    const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(10);
-    const RATE_LIMIT_MAX: usize = 200;
-    let mut request_times: Vec<std::time::Instant> = Vec::new();
-
     let reader = BufReader::new(read_stream);
     for line in reader.lines() {
         let Ok(line) = line else { break };
@@ -567,159 +356,26 @@ fn handle_client(
             continue;
         }
 
-        // Rate limit check — prune old entries, then reject if over limit.
-        let now = std::time::Instant::now();
-        request_times.retain(|t| now.duration_since(*t) < RATE_LIMIT_WINDOW);
-        if request_times.len() >= RATE_LIMIT_MAX {
-            let _ = send_resp(
-                &stream,
-                Response::error(&format!(
-                    "Rate limit exceeded ({RATE_LIMIT_MAX} req per {}s)",
-                    RATE_LIMIT_WINDOW.as_secs(),
-                )),
-            );
-            continue;
-        }
-        request_times.push(now);
-
         let req: Request = match serde_json::from_str(trimmed) {
             Ok(r) => r,
             Err(e) => {
-                let _ = send_resp(&stream, Response::error(&format!("Invalid JSON: {e}")));
+                let _ = send_resp(
+                    &stream,
+                    Response {
+                        ok: false,
+                        error: Some(format!("Invalid JSON: {e}")),
+                        status: None,
+                    },
+                );
                 continue;
             }
         };
 
-        let resp = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            dispatch_request(req, &state, &cmd_tx)
-        }))
-        .unwrap_or_else(|_| Response::error("Internal daemon error"));
-
+        let resp = dispatch_request(req, &state, &cmd_tx);
         let _ = send_resp(&stream, resp);
     }
 
     state.unregister_client(client_id);
-}
-
-fn dispatch_request(
-    req: Request,
-    state: &DaemonState,
-    cmd_tx: &channel::Sender<PwCommand>,
-) -> Response {
-    match req {
-        Request::GetStatus => Response::ok_with_status(state.get_status()),
-
-        Request::SetBands { bands } => {
-            let count = bands.len();
-            if count > MAX_BANDS {
-                return Response::error(&format!("Too many bands (max {MAX_BANDS}, got {count})"));
-            }
-            (*state.eq_bands.lock().unwrap()).clone_from(&bands);
-            let _ = cmd_tx.send(PwCommand::UpdateEq { bands });
-            info!(count, "Bands queued for EQ update");
-            save_state(state);
-            Response::ok()
-        }
-
-        Request::SetPreamp { gain } => {
-            *state.preamp.lock().unwrap() = gain;
-            state.pipeline.set_preamp(gain);
-            info!(gain, "Preamp updated");
-            save_state(state);
-            Response::ok()
-        }
-
-        Request::SetBypass { bypass } => {
-            *state.bypass.lock().unwrap() = bypass;
-            state.pipeline.set_bypass(bypass);
-            info!(bypass, "Bypass toggled");
-            save_state(state);
-            Response::ok()
-        }
-
-        Request::ConnectDevice { node_id } => {
-            let Some(filter_id) = *state.filter_node_id.lock().unwrap() else {
-                return Response::error("Filter not ready yet");
-            };
-            // Reject connecting the filter to itself or to the null sink —
-            // both would create an audio feedback loop.
-            if node_id == filter_id {
-                return Response::error("Cannot connect filter to itself");
-            }
-            if let Some(ns_id) = state.null_sink.lock().unwrap().module_id()
-                && node_id == ns_id
-            {
-                return Response::error(
-                    "Cannot connect to the null sink (would create a feedback loop)",
-                );
-            }
-            // Ignore duplicate connections rather than pushing the same
-            // device ID twice — the PipeWire link already exists.
-            {
-                let devices = state.connected_devices.lock().unwrap();
-                if devices.contains(&node_id) {
-                    return Response::ok();
-                }
-            }
-            state.connected_devices.lock().unwrap().push(node_id);
-            let _ = cmd_tx.send(PwCommand::ConnectDevice { filter_id, node_id });
-            info!(node_id, "Device connected");
-            save_state(state);
-            Response::ok()
-        }
-
-        Request::DisconnectDevice { node_id } => {
-            let Some(filter_id) = *state.filter_node_id.lock().unwrap() else {
-                return Response::error("Filter not ready yet");
-            };
-            state
-                .connected_devices
-                .lock()
-                .unwrap()
-                .retain(|id| *id != node_id);
-            let _ = cmd_tx.send(PwCommand::DisconnectDevice { filter_id, node_id });
-            info!(node_id, "Device disconnected");
-            save_state(state);
-            Response::ok()
-        }
-
-        Request::Shutdown => {
-            info!("Shutdown requested by client");
-            state.shutting_down.store(true, Ordering::Release);
-            let _ = cmd_tx.send(PwCommand::Terminate);
-            // Connect to the socket to wake up the blocked incoming() loop so main can exit.
-            if let Ok(path) = socket_path() {
-                let _ = std::os::unix::net::UnixStream::connect(path);
-            }
-            Response::ok()
-        }
-    }
-}
-
-impl Response {
-    fn ok() -> Self {
-        Self {
-            ok: true,
-            error: None,
-            status: None,
-        }
-    }
-
-    fn ok_with_status(status: DaemonStatus) -> Self {
-        Self {
-            ok: true,
-            error: None,
-            status: Some(status),
-        }
-    }
-
-    fn error(msg: &str) -> Self {
-        Self {
-            ok: false,
-            error: Some(msg.into()),
-            status: None,
-        }
-    }
 }
 
 fn send_resp(mut stream: &UnixStream, resp: Response) -> std::io::Result<()> {
@@ -730,57 +386,152 @@ fn send_resp(mut stream: &UnixStream, resp: Response) -> std::io::Result<()> {
     Ok(())
 }
 
+fn dispatch_request(
+    req: Request,
+    state: &DaemonState,
+    cmd_tx: &channel::Sender<PwCommand>,
+) -> Response {
+    match req {
+        Request::GetStatus => Response {
+            ok: true,
+            error: None,
+            status: Some(state.get_status()),
+        },
+
+        Request::SetBands { bands } => {
+            let count = bands.len();
+            (*state.eq_bands.lock().unwrap()).clone_from(&bands);
+            let _ = cmd_tx.send(PwCommand::UpdateEq { bands });
+            info!(count, "Bands queued for EQ update");
+            Response {
+                ok: true,
+                error: None,
+                status: None,
+            }
+        }
+
+        Request::SetPreamp { gain } => {
+            *state.preamp.lock().unwrap() = gain;
+            state.pipeline.set_preamp(gain);
+            info!(gain, "Preamp updated");
+            Response {
+                ok: true,
+                error: None,
+                status: None,
+            }
+        }
+
+        Request::SetBypass { bypass } => {
+            *state.bypass.lock().unwrap() = bypass;
+            state.pipeline.set_bypass(bypass);
+            info!(bypass, "Bypass toggled");
+            Response {
+                ok: true,
+                error: None,
+                status: None,
+            }
+        }
+
+        Request::ConnectDevice { node_id } => {
+            let Some(filter_id) = *state.filter_node_id.lock().unwrap() else {
+                return Response {
+                    ok: false,
+                    error: Some("Filter not ready yet".into()),
+                    status: None,
+                };
+            };
+            if node_id == filter_id {
+                return Response {
+                    ok: false,
+                    error: Some("Cannot connect filter to itself".into()),
+                    status: None,
+                };
+            }
+            if let Some(ns_id) = state.null_sink.lock().unwrap().module_id()
+                && node_id == ns_id
+            {
+                return Response {
+                    ok: false,
+                    error: Some(
+                        "Cannot connect to the null sink (would create a feedback loop)".into(),
+                    ),
+                    status: None,
+                };
+            }
+            {
+                let devices = state.connected_devices.lock().unwrap();
+                if devices.contains(&node_id) {
+                    return Response {
+                        ok: true,
+                        error: None,
+                        status: None,
+                    };
+                }
+            }
+            state.connected_devices.lock().unwrap().push(node_id);
+            let _ = cmd_tx.send(PwCommand::ConnectDevice { filter_id, node_id });
+            info!(node_id, "Device connected");
+            Response {
+                ok: true,
+                error: None,
+                status: None,
+            }
+        }
+
+        Request::DisconnectDevice { node_id } => {
+            let Some(filter_id) = *state.filter_node_id.lock().unwrap() else {
+                return Response {
+                    ok: false,
+                    error: Some("Filter not ready yet".into()),
+                    status: None,
+                };
+            };
+            state
+                .connected_devices
+                .lock()
+                .unwrap()
+                .retain(|id| *id != node_id);
+            let _ = cmd_tx.send(PwCommand::DisconnectDevice { filter_id, node_id });
+            info!(node_id, "Device disconnected");
+            Response {
+                ok: true,
+                error: None,
+                status: None,
+            }
+        }
+
+        Request::Shutdown => {
+            info!("Shutdown requested by client");
+            state.shutting_down.store(true, Ordering::Release);
+            let _ = cmd_tx.send(PwCommand::Terminate);
+            if let Ok(path) = socket_path() {
+                let _ = std::os::unix::net::UnixStream::connect(path);
+            }
+            Response {
+                ok: true,
+                error: None,
+                status: None,
+            }
+        }
+    }
+}
+
 fn socket_path() -> crate::AppResult<PathBuf> {
     Ok(runtime_dir()?.join("eqtui.sock"))
 }
 
-pub fn lock_path() -> crate::AppResult<PathBuf> {
+fn lock_path() -> crate::AppResult<PathBuf> {
     Ok(runtime_dir()?.join("eqtui.lock"))
 }
 
-/// Returns the XDG runtime directory for the current user.
-pub fn runtime_dir() -> crate::AppResult<PathBuf> {
+fn runtime_dir() -> crate::AppResult<PathBuf> {
     match std::env::var("XDG_RUNTIME_DIR") {
         Ok(dir) if !dir.is_empty() => Ok(PathBuf::from(dir)),
         _ => Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             "XDG_RUNTIME_DIR environment variable is not set or is empty. \
-            This is required for secure operation.",
+             This is required for secure operation.",
         )
         .into()),
     }
-}
-
-/// Start the saemon: set up stdout/stderr, acquire lock, daemonize run.
-pub fn run_daemon(log_dir: &Path) -> AppResult<()> {
-    let stdout = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_dir.join("eqtui.out"))?;
-
-    let stderr = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_dir.join("eqtui.err"))?;
-
-    let lock_path = lock_path()?;
-    let lock_file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .custom_flags(libc::O_CLOEXEC)
-        .open(&lock_path)?;
-
-    if let Err(e) = lock_file.try_lock() {
-        eprintln!("Daemon already running. Use `eqtui stop` to stop it first.");
-        tracing::error!(%e, "Failed to acquire daemon lock; another instance might be running");
-        std::process::exit(1);
-    }
-
-    if let Err(e) = init(stdout, stderr, lock_file.try_clone()?) {
-        eprintln!("Error starting daemon: {e}");
-        std::process::exit(1);
-    }
-    tracing::info!("Daemonized successfully");
-    run(lock_file)
 }

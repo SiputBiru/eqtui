@@ -3,7 +3,6 @@
 
 use std::io;
 use std::panic;
-use std::sync::Arc;
 use std::time;
 use std::time::Duration;
 
@@ -17,7 +16,6 @@ use ratatui::layout::{Constraint, Layout};
 use crate::AppResult;
 use crate::app::{App, DaemonConnection};
 use crate::client::DaemonClient;
-use crate::config::Config;
 use crate::event;
 use crate::event::EventHandler;
 use crate::handler;
@@ -106,8 +104,7 @@ pub fn attach() -> AppResult<()> {
     tracing::info!("Connecting to daemon...");
     let client = DaemonClient::connect()?;
 
-    let config = Arc::new(Config::new(None));
-    let mut app = App::new(config, client);
+    let mut app = App::new(client);
 
     if let Err(e) = app.full_sync() {
         tracing::warn!(%e, "Initial full_sync failed - starting with defaults");

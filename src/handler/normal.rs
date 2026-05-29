@@ -205,14 +205,11 @@ fn handle_command_bar(_key: KeyEvent, app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
     use crossterm::event::{KeyEvent, KeyModifiers};
-    use std::sync::Arc;
 
     #[test]
     fn test_handle_pipeline_horizontal_navigation() {
-        let config = Arc::new(Config::default());
-        let mut app = App::new_test(config);
+        let mut app = App::new_test();
         app.focused_block = FocusedBlock::Pipeline;
 
         assert_eq!(app.eq.column_selected, 1);
@@ -262,8 +259,7 @@ mod tests {
 
     #[test]
     fn test_handle_pipeline_bumping() {
-        let config = Arc::new(Config::default());
-        let mut app = App::new_test(config);
+        let mut app = App::new_test();
         app.focused_block = FocusedBlock::Pipeline;
 
         app.eq.bands.push(EqBand {
@@ -329,8 +325,7 @@ mod tests {
 
     #[test]
     fn test_handle_pipeline_insert_mode_initialization() {
-        let config = Arc::new(Config::default());
-        let mut app = App::new_test(config);
+        let mut app = App::new_test();
         app.focused_block = FocusedBlock::Pipeline;
 
         app.eq.bands.push(EqBand {
@@ -376,8 +371,7 @@ mod tests {
 
     #[test]
     fn test_handle_devices_connect_toggle() {
-        let config = Arc::new(Config::default());
-        let mut app = App::new_test(config);
+        let mut app = App::new_test();
         app.focused_block = FocusedBlock::Devices;
         app.filter_node_id = Some(42); // simulate filter ready
         app.nodes.push(crate::state::NodeInfo {
@@ -405,8 +399,7 @@ mod tests {
 
     #[test]
     fn test_handle_devices_connect_skips_null_sink() {
-        let config = Arc::new(Config::default());
-        let mut app = App::new_test(config);
+        let mut app = App::new_test();
         app.focused_block = FocusedBlock::Devices;
         app.filter_node_id = Some(42);
         // Simulate the null sink with a known PipeWire node ID.
@@ -432,8 +425,7 @@ mod tests {
 
     #[test]
     fn test_handle_devices_connect_no_filter_ready() {
-        let config = Arc::new(Config::default());
-        let mut app = App::new_test(config);
+        let mut app = App::new_test();
         app.focused_block = FocusedBlock::Devices;
         // filter_node_id is None — not ready yet
         app.nodes.push(crate::state::NodeInfo {

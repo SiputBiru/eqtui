@@ -3,9 +3,6 @@
 
 use std::fs;
 use std::path::Path;
-use std::sync::LazyLock;
-
-use regex::Regex;
 
 use crate::state::{EqBand, FilterType};
 
@@ -53,15 +50,33 @@ pub fn parse_peq(path: &Path) -> Result<PeqPreset, PeqError> {
     parse_peq_str(&fs::read_to_string(path)?)
 }
 
-static PREAMP_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^Preamp:\s+([-.\d]+)\s*dB").unwrap());
+/// Parse a PEQ filter line of the form:
+/// `Filter <N>: ON <TYPE> Fc <FREQ> Hz Gain <GAIN> dB Q <Q>`
+fn parse_filter_line(trimmed: &str) -> Option<EqBand> {
+    let rest = trimmed.split(": ON ").nth(1)?;
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+    if parts.len() < 9 {
+        return None;
+    }
 
-static FILTER_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"Filter\s+\d+:\s+ON\s+(PK|LSC|HSC)\s+Fc\s+([\d.]+)\s+Hz\s+Gain\s+([-\d.]+)\s+dB\s+Q\s+([\d.]+)",
-    )
-    .unwrap()
-});
+    let filter_type = match parts[0] {
+        "PK" => FilterType::Peak,
+        "LSC" => FilterType::LowShelf,
+        "HSC" => FilterType::HighShelf,
+        _ => return None,
+    };
+
+    let frequency = parts[2].parse().unwrap_or(1000.0);
+    let gain = parts[5].parse().unwrap_or(0.0);
+    let q = parts[8].parse().unwrap_or(1.0);
+
+    Some(EqBand {
+        frequency,
+        gain,
+        q,
+        filter_type,
+    })
+}
 
 pub fn parse_peq_str(input: &str) -> Result<PeqPreset, PeqError> {
     let mut preamp: Option<f32> = None;
@@ -73,8 +88,10 @@ pub fn parse_peq_str(input: &str) -> Result<PeqPreset, PeqError> {
             continue;
         }
 
-        if let Some(caps) = PREAMP_RE.captures(trimmed) {
-            let raw: String = caps.get(1).map_or("", |m| m.as_str()).to_string();
+        // Parse "Preamp: <val> dB"
+        if let Some(val) = trimmed.strip_prefix("Preamp:") {
+            let val = val.trim();
+            let raw = val.strip_suffix("dB").map_or(val, |s| s.trim()).to_string();
             let gain: f32 = raw.parse().map_err(|_| PeqError::InvalidPreamp {
                 line: lineno + 1,
                 raw,
@@ -83,19 +100,11 @@ pub fn parse_peq_str(input: &str) -> Result<PeqPreset, PeqError> {
             continue;
         }
 
-        if let Some(caps) = FILTER_RE.captures(trimmed) {
-            let filter_type = match caps.get(1).map(|m| m.as_str()) {
-                Some("PK") => FilterType::Peak,
-                Some("LSC") => FilterType::LowShelf,
-                Some("HSC") => FilterType::HighShelf,
-                _ => continue,
-            };
-            bands.push(EqBand {
-                frequency: caps[2].parse().unwrap_or(1000.0),
-                gain: caps[3].parse().unwrap_or(0.0),
-                q: caps[4].parse().unwrap_or(1.0),
-                filter_type,
-            });
+        // Parse "Filter <N>: ON <TYPE> Fc <FREQ> Hz Gain <GAIN> dB Q <Q>"
+        if trimmed.contains(": ON ")
+            && let Some(band) = parse_filter_line(trimmed)
+        {
+            bands.push(band);
         }
     }
 

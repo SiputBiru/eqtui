@@ -63,15 +63,12 @@ pub fn handle(key: KeyEvent, app: &mut App) {
 mod tests {
     use super::*;
     use crate::app::FocusedBlock;
-    use crate::config::Config;
     use crate::state::EqBand;
     use crossterm::event::{KeyEvent, KeyModifiers};
-    use std::sync::Arc;
     use tui_input::Input;
 
     fn setup_app() -> App {
-        let config = Arc::new(Config::default());
-        let mut app = App::new_test(config);
+        let mut app = App::new_test();
         app.focused_block = FocusedBlock::Pipeline;
         app.mode = Mode::Insert;
         app.eq.bands.push(EqBand {

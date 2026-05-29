@@ -103,14 +103,12 @@ Close with `q` — the EQ keeps running. Re-attach anytime with `eqtui attach`.
 - **Profile system** — save/switch presets with `:w`
 - **Vim-ish controls** — Normal/Insert/Visual/Command modes
 
-## Config & Profiles
+## Profiles
 
-Settings are stored in standard `XDG` locations.
+Profiles are stored in standard `XDG` locations.
 
-- **Config:** `~/.config/eqtui/config.toml`
 - **Profiles:** `~/.config/eqtui/profiles.toml`
 - **Logs:** `~/.local/share/eqtui/eqtui.log`
-- **State:** `~/.local/share/eqtui/state.toml` (auto-saved daemon snapshot)
 
 ### Profile System
 
@@ -174,31 +172,12 @@ filter_type = "LowShelf"
   - `q`: Quality factor (bandwidth).
   - `filter_type`: Either `"Peak"`, `"LowShelf"`, or `"HighShelf"`.
 
-### Customizing Keys
-
-You can change the default controls in your `config.toml`:
-
-```toml
-[keys.normal]
-toggle_bypass = 'b'
-add_band = 'a'
-delete_band = 'd'
-
-[keys.insert]
-confirm = '\n'
-cancel = '\x1b'
-```
-
 ## Background Process Details
 
 The daemon employs standard Linux mechanisms for lifecycle management and security:
 
 - **XDG_RUNTIME_DIR:** The Unix socket and lock file are placed here to ensure they are isolated to the current user's session and automatically cleaned up on logout.
-- **User Integrity:** The daemon only accepts connections from the same user ID that initiated the process.
 - **Exclusive Advisory Locking:** An advisory lock (`flock`) on a dedicated file ensures only one daemon instance runs at a time. This method is robust against stale lock files from previous crashes.
-- **Specialized POSIX Daemonization:** A custom double-fork procedure detaches the process from the controlling terminal. This prevents the daemon from unintentionally re-acquiring a terminal and ensures it continues running as a background service.
-- **FD Security:** File descriptors for logs and the lock file are opened with `O_CLOEXEC` to prevent accidental inheritance by child processes (e.g., when spawning `pw-link`).
-- **State Persistence:** The daemon automatically saves its current state (bands, preamp, bypass, connected devices) to `state.toml` after every change. If the daemon crashes or is killed, this state is restored on the next start — no unsaved tweaks are lost.
 
 ## Install from Source
 

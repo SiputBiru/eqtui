@@ -1,14 +1,12 @@
 // Copyright (C) 2026 SiputBiru <radityamahatma23@gmail.com>
 // SPDX-License-Identifier: GPL-2.0-only
 
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tui_input::Input;
 
 use crate::AppResult;
 use crate::client::DaemonClient;
-use crate::config::Config;
 use crate::profiles::{self, Profile};
 use crate::protocol::PushEvent;
 use crate::state::{EqBand, FilterState, NodeInfo, NullSinkState};
@@ -59,7 +57,6 @@ impl Default for EqState {
 #[allow(clippy::struct_excessive_bools)]
 pub struct App {
     pub running: bool,
-    pub config: Arc<Config>,
     pub focused_block: FocusedBlock,
     pub mode: Mode,
 
@@ -100,7 +97,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(config: Arc<Config>, client: DaemonClient) -> Self {
+    pub fn new(client: DaemonClient) -> Self {
         let profiles = profiles::load();
         let active = 0;
         let (bands, preamp) = if let Some(p) = profiles.get(active) {
@@ -111,7 +108,6 @@ impl App {
 
         Self {
             running: true,
-            config,
             client: Some(client),
             focused_block: FocusedBlock::Devices,
             mode: Mode::Normal,
@@ -388,10 +384,9 @@ impl App {
 
 #[cfg(test)]
 impl App {
-    pub(crate) fn new_test(config: Arc<Config>) -> Self {
+    pub(crate) fn new_test() -> Self {
         Self {
             running: true,
-            config,
             client: None,
             focused_block: FocusedBlock::Devices,
             mode: Mode::Normal,
@@ -428,12 +423,10 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
 
     #[test]
     fn test_app_initialization() {
-        let config = Arc::new(Config::default());
-        let app = App::new_test(config);
+        let app = App::new_test();
 
         assert!(app.running);
         assert_eq!(app.eq.band_selected, 0);
@@ -454,8 +447,7 @@ mod tests {
 
     #[test]
     fn switch_profile_updates_memory_only() {
-        let config = std::sync::Arc::new(crate::config::Config::default());
-        let mut app = App::new_test(config);
+        let mut app = App::new_test();
 
         // Ensure have 2 profiles
         app.profiles.push(crate::profiles::Profile {
@@ -483,8 +475,7 @@ mod tests {
     #[test]
     #[allow(clippy::float_cmp)]
     fn test_read_only_profile_guard() {
-        let config = std::sync::Arc::new(crate::config::Config::default());
-        let mut app = App::new_test(config);
+        let mut app = App::new_test();
 
         // Profile 0: Read-only (linked to file)
         app.profiles[0].path = Some("some_path.txt".into());
