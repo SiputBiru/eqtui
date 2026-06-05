@@ -22,13 +22,18 @@ Runs as a background daemon so the EQ keeps going even after closing the TUI.
 ## Quick Start
 
 ```bash
-cargo install eqtui --version 0.1.1-alpha.x # cause its still alpha 
-# we still need to add specific version to make it working
+cargo install eqtui
+
 eqtui daemon    # start the engine (background)
+
 eqtui           # open the TUI
+
 eqtui stop      # stop the daemon
+
 eqtui restart   # restart the daemon
+
 eqtui --help    # show all commands
+
 eqtui --version # show version
 ```
 
@@ -95,13 +100,16 @@ Close with `q` — the EQ keeps running. Re-attach anytime with `eqtui attach`.
 | `:add [freq]` | Add a band at optional frequency (default 1000Hz) |
 | `Esc` | Clear command and return to Normal Mode |
 
-## Features (the short version)
+## Features 
 
 - **Daemon/TUI split** — EQ engine stays alive when the UI closes
 - **Parametric EQ** — frequency, gain, Q, filter type per band
 - **AutoEQ import** — `:load` any PEQ file from AutoEQ / Squiglink
 - **Profile system** — save/switch presets with `:w`
 - **Vim-ish controls** — Normal/Insert/Visual/Command modes
+- **Live frequency response graph** — right panel shows the combined
+  magnitude response of all active bands, using the same biquad formulas
+  as the audio pipeline
 
 ## Profiles
 
@@ -183,17 +191,19 @@ The daemon employs standard Linux mechanisms for lifecycle management and securi
 
 ```bash
 git clone https://github.com/SiputBiru/eqtui
+
 cd eqtui
+
 cargo build --release
 ```
 
 Needs PipeWire and a Nerd Font.
 
-## Known Issues
+## Limitations
 
-- **Frequency Response Graph (Right Panel):** Still a work-in-progress.
-  Currently renders a static placeholder target curve (PEQdB Diamond β, why PEQdb? idk man i just see it cool).
-  The actual EQ transfer function overlay is not yet implemented.
+- **Keyboard-only — no mouse support.** The TUI is entirely keyboard-driven
+  (Vim-style modes). Clicking, scrolling, and selecting with the mouse are
+  not handled.
 
 ---
 
