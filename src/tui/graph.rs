@@ -10,109 +10,248 @@ use ratatui::{
 };
 
 use crate::app::App;
-pub fn render(_app: &App, frame: &mut Frame, area: Rect) {
-    // PEQdB Diamond β target dataset (transformed to log10 space)
-    let target_raw: &[(f64, f64)] = &[
-        (20.00, 82.981),
-        (22.29, 82.935),
-        (25.28, 82.865),
-        (28.69, 82.772),
-        (32.55, 82.647),
-        (36.93, 82.479),
-        (41.90, 82.255),
-        (47.53, 81.957),
-        (53.93, 81.565),
-        (61.19, 81.060),
-        (69.42, 80.429),
-        (78.76, 79.669),
-        (89.36, 78.795),
-        (101.39, 77.848),
-        (115.03, 76.927),
-        (130.51, 76.015),
-        (148.07, 75.204),
-        (168.00, 74.535),
-        (190.61, 74.019),
-        (216.26, 73.625),
-        (245.36, 73.350),
-        (278.38, 73.191),
-        (315.84, 73.081),
-        (358.34, 72.984),
-        (406.56, 73.009),
-        (461.27, 73.305),
-        (523.34, 73.628),
-        (593.77, 73.913),
-        (673.67, 74.221),
-        (764.32, 74.524),
-        (867.17, 74.721),
-        (983.87, 74.952),
-        (1116.26, 75.471),
-        (1266.47, 76.197),
-        (1436.90, 76.992),
-        (1630.26, 77.960),
-        (1849.64, 79.336),
-        (2098.54, 80.820),
-        (2380.94, 82.454),
-        (2701.33, 83.629),
-        (3064.85, 84.087),
-        (3477.27, 84.041),
-        (3945.20, 83.612),
-        (4476.10, 83.046),
-        (5078.43, 82.674),
-        (5761.82, 82.630),
-        (6537.18, 82.741),
-        (7416.87, 82.911),
-        (8414.94, 82.514),
-        (9547.31, 81.399),
-        (10832.07, 80.067),
-        (12289.71, 78.464),
-        (13943.51, 76.771),
-        (15819.85, 75.144),
-        (17948.68, 73.499),
-        (20000.00, 72.027),
-    ];
+use crate::effects::equalizer::{BiquadCoeffs, biquad_coefficients, biquad_magnitude_db};
+use crate::pipeline::SAMPLE_RATE;
 
-    let target_data: Vec<(f64, f64)> = target_raw.iter().map(|(f, g)| (f.log10(), *g)).collect();
-    let ref_line: Vec<(f64, f64)> = vec![(20.0f64.log10(), 75.0), (20000.0f64.log10(), 75.0)];
+/// Number of frequency points to evaluate for the response curve.
+const RESPONSE_POINTS: usize = 200;
 
-    let datasets = vec![
+/// Generate `n` log-spaced frequency points from `start` to `end` Hz.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "n is small (200), no precision issue"
+)]
+fn log_frequencies(start: f32, end: f32, n: usize) -> Vec<f32> {
+    let ratio = (end / start).powf(1.0 / (n.saturating_sub(1)) as f32);
+    let mut freqs = Vec::with_capacity(n);
+    let mut f = start;
+    for _ in 0..n {
+        freqs.push(f);
+        f *= ratio;
+    }
+    freqs
+}
+
+/// Compute the combined magnitude response (dB) of all filters at a given frequency.
+fn combined_response_db(coeffs: &[BiquadCoeffs], freq_hz: f32, sample_rate: f32) -> f64 {
+    coeffs
+        .iter()
+        .map(|c| f64::from(biquad_magnitude_db(c, freq_hz, sample_rate)))
+        .sum()
+}
+
+pub fn render(app: &App, frame: &mut Frame, area: Rect) {
+    let bands = &app.eq.bands;
+    let bypass = app.eq.bypass;
+    let preamp = app.preamp;
+
+    // Build the response curve
+    let curve: Vec<(f64, f64)> = if bands.is_empty() || bypass {
+        // Flat 0 dB line when no bands or bypassed
+        vec![(20.0f64.log10(), 0.0), (20000.0f64.log10(), 0.0)]
+    } else {
+        let coeffs: Vec<BiquadCoeffs> = bands
+            .iter()
+            .map(|b| biquad_coefficients(b, SAMPLE_RATE))
+            .collect();
+
+        let freqs = log_frequencies(20.0, 20000.0, RESPONSE_POINTS);
+        freqs
+            .iter()
+            .map(|&f| {
+                let x = f64::from(f).log10();
+                let y = combined_response_db(&coeffs, f, SAMPLE_RATE);
+                (x, y)
+            })
+            .collect()
+    };
+
+    // 0 dB reference line
+    let ref_line: [(f64, f64); 2] = [(20.0f64.log10(), 0.0), (20000.0f64.log10(), 0.0)];
+
+    // Determine curve styling
+    let curve_dark = bypass || bands.is_empty();
+    let curve_style = if curve_dark {
+        Style::default().dark_gray()
+    } else {
+        Style::default().cyan().bold()
+    };
+
+    let mut datasets = vec![
         Dataset::default()
-            .name("75dB Ref")
+            .name("0 dB Ref")
             .marker(symbols::Marker::Braille)
             .graph_type(GraphType::Line)
             .style(Style::default().dark_gray().not_bold())
             .data(&ref_line),
+    ];
+
+    datasets.push(
         Dataset::default()
-            .name("PEQdB Diamond β Target")
+            .name(if bypass { "Bypassed" } else { "Response" })
             .marker(symbols::Marker::Braille)
             .graph_type(GraphType::Line)
-            .style(Style::default().magenta().bold())
-            .data(&target_data),
-    ];
+            .style(curve_style)
+            .data(&curve),
+    );
+
+    // Build the block title
+    let mut title = String::from(" Frequency Response ");
+    if !bands.is_empty() {
+        let _ = std::fmt::write(&mut title, format_args!("| Preamp: {preamp:.1} dB "));
+    }
+    if bypass {
+        title.push_str("[BYPASSED] ");
+    }
 
     let x_axis = Axis::default()
         .title("Frequency (Hz)".white())
         .style(Style::default().gray())
-        // log10(20) approx 1.30, log10(20000) approx 4.30
         .bounds([20.0f64.log10(), 20000.0f64.log10()])
         .labels(["20", "100", "1k", "10k", "20k"]);
 
     let y_axis = Axis::default()
         .title("Gain (dB)".white())
         .style(Style::default().gray())
-        .bounds([60.0, 100.0])
-        .labels(["60", "80", "100"]);
-    // .bounds([70.0, 90.0])
-    // .labels(["70", "80", "90"]);
+        .bounds([-24.0, 24.0])
+        .labels(["-24", "-12", "0", "+12", "+24"]);
+
+    let border_style = if bypass {
+        Style::default().fg(Color::DarkGray)
+    } else {
+        Style::default().fg(Color::Cyan)
+    };
 
     let chart = Chart::new(datasets)
         .block(
             Block::default()
-                .title(" Frequency Response [WIP] - Placeholder")
+                .title(title.as_str())
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .border_style(border_style),
         )
         .x_axis(x_axis)
         .y_axis(y_axis);
 
     frame.render_widget(chart, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_frequencies_range() {
+        let freqs = log_frequencies(20.0, 20000.0, 200);
+        assert_eq!(freqs.len(), 200);
+        assert!((freqs[0] - 20.0).abs() < 0.01);
+        assert!((freqs[199] - 20000.0).abs() < 1.0);
+        // Verify log-spacing: each step should be a constant ratio > 1
+        let ratio = freqs[1] / freqs[0];
+        for i in 2..freqs.len() {
+            let r = freqs[i] / freqs[i - 1];
+            assert!((r - ratio).abs() < 0.001, "non-uniform log spacing at {i}");
+        }
+    }
+
+    #[test]
+    fn log_frequencies_single_point() {
+        let freqs = log_frequencies(100.0, 100.0, 1);
+        assert_eq!(freqs.len(), 1);
+        assert!((freqs[0] - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn combined_response_empty_coeffs() {
+        assert!((combined_response_db(&[], 1000.0, 48000.0) - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn combined_response_peak_at_center() {
+        let band = crate::state::EqBand {
+            frequency: 1000.0,
+            gain: 6.0,
+            q: 1.0,
+            filter_type: crate::state::FilterType::Peak,
+        };
+        let coeffs = vec![biquad_coefficients(&band, 48000.0)];
+        // At the center frequency, a peaking filter with +6 dB gain
+        // should be close to +6 dB
+        let db = combined_response_db(&coeffs, 1000.0, 48000.0);
+        assert!(
+            (db - 6.0).abs() < 0.5,
+            "expected ~6 dB at center, got {db:.3}"
+        );
+    }
+
+    #[test]
+    fn combined_response_far_from_center() {
+        let band = crate::state::EqBand {
+            frequency: 1000.0,
+            gain: 12.0,
+            q: 5.0,
+            filter_type: crate::state::FilterType::Peak,
+        };
+        let coeffs = vec![biquad_coefficients(&band, 48000.0)];
+        // Far from the center frequency, gain should approach 0 dB
+        let db = combined_response_db(&coeffs, 100.0, 48000.0);
+        assert!(
+            db.abs() < 1.0,
+            "expected near 0 dB far from center, got {db:.3}"
+        );
+    }
+
+    #[test]
+    fn response_far_from_center_very_low_freq() {
+        // Regression test for catastrophic cancellation at low frequencies.
+        // A peaking filter at 1 kHz should be ~0 dB at 20 Hz.
+        let band = crate::state::EqBand {
+            frequency: 1000.0,
+            gain: 6.0,
+            q: 1.0,
+            filter_type: crate::state::FilterType::Peak,
+        };
+        let coeffs = vec![biquad_coefficients(&band, 48000.0)];
+        let db = combined_response_db(&coeffs, 20.0, 48000.0);
+        assert!(
+            db.abs() < 0.1,
+            "expected ~0 dB at 20 Hz for 1 kHz PK filter, got {db:.6}"
+        );
+    }
+
+    #[test]
+    fn multiple_bands_response_far_from_centers() {
+        // Several bands with their centres at ≥ 1 kHz should be flat at 20-100 Hz
+        let bands = [
+            crate::state::EqBand {
+                frequency: 2000.0,
+                gain: 8.0,
+                q: 2.0,
+                filter_type: crate::state::FilterType::Peak,
+            },
+            crate::state::EqBand {
+                frequency: 5000.0,
+                gain: -3.0,
+                q: 1.5,
+                filter_type: crate::state::FilterType::Peak,
+            },
+            crate::state::EqBand {
+                frequency: 10000.0,
+                gain: 2.0,
+                q: 0.7,
+                filter_type: crate::state::FilterType::HighShelf,
+            },
+        ];
+        let coeffs: Vec<_> = bands
+            .iter()
+            .map(|b| biquad_coefficients(b, 48000.0))
+            .collect();
+
+        let db_20 = combined_response_db(&coeffs, 20.0, 48000.0);
+        let db_50 = combined_response_db(&coeffs, 50.0, 48000.0);
+        let db_100 = combined_response_db(&coeffs, 100.0, 48000.0);
+
+        assert!(db_20.abs() < 0.2, "20 Hz: expected ~0, got {db_20:.6}");
+        assert!(db_50.abs() < 0.2, "50 Hz: expected ~0, got {db_50:.6}");
+        assert!(db_100.abs() < 0.2, "100 Hz: expected ~0, got {db_100:.6}");
+    }
 }

@@ -3,7 +3,7 @@
 
 use crate::state::{EqBand, FilterType};
 
-struct BiquadCoeffs {
+pub(crate) struct BiquadCoeffs {
     b0: f32,
     b1: f32,
     b2: f32,
@@ -130,7 +130,44 @@ impl AudioEq {
     }
 }
 
-fn biquad_coefficients(band: &EqBand, sample_rate: f32) -> BiquadCoeffs {
+/// Convert parametric EQ band parameters to biquad filter coefficients using
+/// the [Audio EQ Cookbook](https://webaudio.github.io/Audio-EQ-Cookbook/Audio-EQ-Cookbook.txt)
+/// formulas (Robert Bristow-Johnson).
+///
+/// # Bilinear Transform
+///
+/// The cookbook designs an analog prototype filter, then maps it to the digital
+/// domain via the bilinear transform.  The centre frequency is pre-warped so
+/// the digital filter matches the target analogue frequency:
+///
+///   w0 = 2π · f / fs
+///
+/// # Intermediate Variables
+///
+///   gain_linear = 10^(gain_dB / 40)    —  peak/shelf gain, linear scale
+///   alpha       = sin(w0) / (2 · Q)    —  bandwidth parameter
+///
+/// # Filter Types
+///
+/// **Peak (PK)** — boosts or cuts a band around w0.  At DC and Nyquist the
+/// response is unity (0 dB).  `a1` intentionally equals `b1`.
+///
+/// **LowShelf (LS)** — applies constant gain below w0, transitioning to unity
+/// above.  The transition slope is set by Q.
+///
+/// **HighShelf (HS)** — applies constant gain above w0, transitioning to unity
+/// below.  The transition slope is set by Q.
+///
+/// The resulting coefficients (b0, b1, b2, a1, a2) are normalised by a0 so
+/// the `a0` term in the denominator is implicitly 1.  They feed directly into
+/// the difference equation:
+///
+///   y[n] = b0·x[n] + b1·x[n-1] + b2·x[n-2] − a1·y[n-1] − a2·y[n-2]
+#[allow(
+    clippy::doc_markdown,
+    reason = "math notation / filter type names in equations"
+)]
+pub(crate) fn biquad_coefficients(band: &EqBand, sample_rate: f32) -> BiquadCoeffs {
     use std::f32::consts::PI;
 
     let freq = band.frequency.clamp(10.0, sample_rate * 0.49);
@@ -188,6 +225,95 @@ fn biquad_coefficients(band: &EqBand, sample_rate: f32) -> BiquadCoeffs {
     };
 
     BiquadCoeffs { b0, b1, b2, a1, a2 }
+}
+
+/// Compute the magnitude response (in dB) of a biquad filter at a given frequency.
+///
+/// # Background: The Biquad Transfer Function
+///
+/// The biquad difference equation is:
+///
+///   y[n] = b0·x[n] + b1·x[n-1] + b2·x[n-2] − a1·y[n-1] − a2·y[n-2]
+///
+/// In the z-domain this becomes the transfer function:
+///
+///   H(z) = (b0 + b1·z⁻¹ + b2·z⁻²) / (1 + a1·z⁻¹ + a2·z⁻²)
+///
+/// Evaluating the frequency response means setting z = e^{jω} where
+/// ω = 2π·f / fs, producing H(e^{jω}) — a complex number whose magnitude
+/// |H| is the gain at frequency f.
+///
+/// # Current Implementation: Direct Rectangular Form
+///
+/// The real and imaginary parts of numerator and denominator are computed
+/// separately:
+///
+///   Numerator:   b0 + b1·e^{-jω} + b2·e^{-2jω}
+///              = (b0 + b1·cos ω + b2·cos 2ω) − j·(b1·sin ω + b2·sin 2ω)
+///
+///   Denominator: 1 + a1·e^{-jω} + a2·e^{-2jω}
+///              = (1 + a1·cos ω + a2·cos 2ω) − j·(a1·sin ω + a2·sin 2ω)
+///
+/// Then:
+///
+///   |H|² = (N_real² + N_imag²) / (D_real² + D_imag²)
+///   |H|_dB = 10 · log₁₀(|H|²)
+///
+/// This form produces accurate results at all frequencies because it
+/// never subtracts nearly-equal large numbers.
+///
+/// # Superseded: The Expanded Form
+///
+/// Algebraically expanding |H(e^{jω})|² yields the closed form:
+///
+///   |H|² = (b0² + b1² + b2² + 2(b0b1 + b1b2)cos ω + 2b0b2 cos 2ω) /
+///          (1 + a1² + a2² + 2(a1 + a1a2)cos ω + 2a2 cos 2ω)
+///
+/// This is algebraically equivalent but loses precision at frequencies far
+/// from a band's centre.  At those frequencies cos ω ≈ 1, causing num and
+/// den to shrink to near zero as a difference of much larger terms.  f32
+/// does not have enough mantissa bits to resolve the result.
+/// For a peaking filter at 1 kHz:
+///
+///   |H(20 Hz)|² ≈ 1.0  →  0 dB
+///
+/// The expanded form produces:
+///
+///   Numerator   ≈  1.09 + 3.59 + 0.75 − 7.25 + 1.81 = 0.0007   (true: 0.00025)
+///   Denominator ≈  1.00 + 3.59 + 0.83 − 7.25 + 1.82 = 0.0003   (true: 0.00026)
+///
+/// Five large terms cancel to produce a tiny difference — f32 precision
+/// cannot preserve the ratio.  The direct rectangular form avoids this by
+/// keeping the computation in separate real/imaginary components, never
+/// forcing a large cancellation.
+#[allow(
+    clippy::similar_names,
+    clippy::doc_markdown,
+    reason = "math notation uses cos_w/sin_w convention and variables like N_real² in equations"
+)]
+pub(crate) fn biquad_magnitude_db(coeffs: &BiquadCoeffs, freq_hz: f32, sample_rate: f32) -> f32 {
+    use std::f32::consts::PI;
+
+    let w = 2.0 * PI * freq_hz / sample_rate;
+    let cos_w = w.cos();
+    let cos_2w = (2.0 * w).cos();
+    let sin_w = w.sin();
+    let sin_2w = (2.0 * w).sin();
+
+    let n_real = coeffs.b0 + coeffs.b1 * cos_w + coeffs.b2 * cos_2w;
+    let n_imag = -(coeffs.b1 * sin_w + coeffs.b2 * sin_2w);
+    let d_real = 1.0 + coeffs.a1 * cos_w + coeffs.a2 * cos_2w;
+    let d_imag = -(coeffs.a1 * sin_w + coeffs.a2 * sin_2w);
+
+    let n_mag_sq = n_real * n_real + n_imag * n_imag;
+    let d_mag_sq = d_real * d_real + d_imag * d_imag;
+
+    if d_mag_sq <= 0.0 {
+        return -100.0;
+    }
+
+    let mag_sq = (n_mag_sq / d_mag_sq).max(f32::EPSILON);
+    10.0 * mag_sq.log10()
 }
 
 #[cfg(test)]
