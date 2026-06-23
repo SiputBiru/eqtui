@@ -19,6 +19,10 @@ by Robert Bristow-Johnson (W3C)
 
 Runs as a background daemon so the EQ keeps going even after closing the TUI.
 
+> [!WARNING]
+> *This is a Hobby Project.* Expect bugs and zero professional guarantees.
+> Use it with a caution.
+
 ## Quick Start
 
 ```bash
