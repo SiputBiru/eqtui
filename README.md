@@ -10,7 +10,7 @@ Built with [Ratatui](https://ratatui.rs).
 <img src="./imgs/theviewofthetui2.png" width="640" alt="idontknowwhattocallforthis">
 
 [EasyEffects](https://github.com/wwmm/easyeffects) is great, but sometimes I just
-want a simple EQ — not a full DSP pipeline with a GTK or Qt UI.<br>
+want a simple EQ not a full DSP pipeline with a GTK or Qt UI.<br>
 And also i just want to learn little bit about DSP stuff.
 
 The biquad filter implementation follows the excellent
@@ -106,12 +106,12 @@ Close with `q` — the EQ keeps running. Re-attach anytime with `eqtui attach`.
 
 ## Features 
 
-- **Daemon/TUI split** — EQ engine stays alive when the UI closes
-- **Parametric EQ** — frequency, gain, Q, filter type per band
-- **AutoEQ import** — `:load` any PEQ file from AutoEQ / Squiglink
-- **Profile system** — save/switch presets with `:w`
-- **Vim-ish controls** — Normal/Insert/Visual/Command modes
-- **Live frequency response graph** — right panel shows the combined
+- **Daemon/TUI split**: EQ engine stays alive when the UI closes
+- **Parametric EQ**: frequency, gain, Q, filter type per band
+- **AutoEQ import**: `:load` any PEQ file from AutoEQ / Squiglink
+- **Profile system**: save/switch presets with `:w`
+- **Vim-ish controls**: Normal/Insert/Visual/Command modes
+- **Live frequency response graph**: right panel shows the combined
   magnitude response of all active bands, using the same biquad formulas
   as the audio pipeline
 
@@ -247,7 +247,7 @@ Needs PipeWire and a Nerd Font.
 
 ## Limitations
 
-- **Keyboard-only — no mouse support.** The TUI is entirely keyboard-driven
+- **Keyboard-only no mouse support.** The TUI is entirely keyboard-driven
   (Vim-style modes). Clicking, scrolling, and selecting with the mouse are
   not handled.
 
