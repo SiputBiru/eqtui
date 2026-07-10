@@ -230,7 +230,7 @@ journalctl --user -u eqtui -f
 ```
 
 > [!NOTE]
-> When using the systemd service, `eqtui`'s built-in auto-launch is harmless — it
+> When using the systemd service, `eqtui`'s built-in auto-launch is harmlessm, it
 > detects the already-running daemon and connects directly. No conflict.
 
 ## Install from Source
