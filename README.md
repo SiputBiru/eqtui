@@ -41,7 +41,7 @@ eqtui --help    # show all commands
 eqtui --version # show version
 ```
 
-Close with `q` — the EQ keeps running. Re-attach anytime with `eqtui attach`.
+Close with `q` the EQ keeps running. Re-attach anytime with `eqtui attach`.
 
 ## Keybindings
 
