@@ -4,7 +4,6 @@
 //! Fire-and-forget CLI subcommands that connect to the daemon,
 //! send a single request, and exit.
 
-use std::path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -86,7 +85,7 @@ Options:
 }
 
 /// Route CLI commands and TUI attach to respective handlers
-pub fn dispatch(mode: &str, args: &[String], log_dir: &path::Path) -> AppResult<()> {
+pub fn dispatch(mode: &str, args: &[String]) -> AppResult<()> {
     match mode {
         "-h" | "--help" => {
             print_usage();
@@ -96,7 +95,7 @@ pub fn dispatch(mode: &str, args: &[String], log_dir: &path::Path) -> AppResult<
             println!("eqtui v{}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
-        "daemon" => daemon::run_daemon(log_dir),
+        "daemon" => daemon::run_daemon(),
         "stop" => run_stop(),
         "restart" => run_restart(),
         "load" => run_load(args),

@@ -120,7 +120,8 @@ Close with `q` — the EQ keeps running. Re-attach anytime with `eqtui attach`.
 Profiles are stored in standard `XDG` locations.
 
 - **Profiles:** `~/.config/eqtui/profiles.toml`
-- **Logs:** `~/.local/share/eqtui/eqtui.log`
+- **Logs:** Stderr (daemon/CLI) or `~/.local/share/eqtui/eqtui-tui.log` (TUI)
+- **Verbosity:** Set `RUST_LOG=eqtui=debug` for debug output
 
 ### Profile System
 
@@ -190,6 +191,47 @@ The daemon employs standard Linux mechanisms for lifecycle management and securi
 
 - **XDG_RUNTIME_DIR:** The Unix socket and lock file are placed here to ensure they are isolated to the current user's session and automatically cleaned up on logout.
 - **Exclusive Advisory Locking:** An advisory lock (`flock`) on a dedicated file ensures only one daemon instance runs at a time. This method is robust against stale lock files from previous crashes.
+
+### Running as a systemd User Service
+
+For a persistent daemon that starts automatically with your login session and stays alive
+even when the TUI is closed, set it up as a user service:
+
+```ini
+# ~/.config/systemd/user/eqtui.service
+[Unit]
+Description=eqtui audio effects daemon for PipeWire
+After=pipewire-session-manager.service pipewire.service
+Wants=pipewire-session-manager.service pipewire.service
+
+[Service]
+Type=exec
+ExecStart=%h/.cargo/bin/eqtui daemon
+Restart=on-failure
+RestartSec=2
+Environment=RUST_LOG=eqtui=info
+
+[Install]
+WantedBy=default.target
+```
+
+Enable and start it:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now eqtui
+```
+
+Once the service is running, `eqtui` (TUI) will connect to it automatically — no
+manual daemon launch needed. View logs with:
+
+```bash
+journalctl --user -u eqtui -f
+```
+
+> [!NOTE]
+> When using the systemd service, `eqtui`'s built-in auto-launch is harmless — it
+> detects the already-running daemon and connects directly. No conflict.
 
 ## Install from Source
 

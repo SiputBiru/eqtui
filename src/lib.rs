@@ -9,6 +9,7 @@ pub mod daemon;
 pub mod effects;
 pub mod event;
 pub mod handler;
+pub mod logging;
 pub mod pipeline;
 pub mod profiles;
 pub mod protocol;

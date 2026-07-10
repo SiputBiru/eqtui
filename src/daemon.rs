@@ -4,11 +4,11 @@
 //! Daemon process — owns the `PipeWire` audio pipeline and serves
 //! TUI/CLI clients over a Unix-domain socket.
 
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::io::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -209,23 +209,12 @@ impl DaemonState {
 // Sets up the lock file, starts the PipeWire pipeline, and listens
 // on a Unix socket for TUI/CLI client connections.
 
-pub fn run_daemon(log_dir: &Path) -> AppResult<()> {
-    let log_file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(log_dir.join("eqtui.log"))?;
-
-    // Reconfigure tracing to write to the daemon log file.
-    // The main process already set up a file logger, but after
-    // the fork the daemon inherits the same fd.  We reopen so
-    // the daemon has its own independent log.
+pub fn run_daemon() -> AppResult<()> {
     tracing::info!("Daemon starting up");
-    drop(log_file);
 
     // Acquire exclusive lock so only one daemon instance runs.
     let lock_path = lock_path()?;
-    let lock_file = OpenOptions::new()
+    let lock_file = std::fs::OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)

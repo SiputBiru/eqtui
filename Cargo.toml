@@ -1,6 +1,6 @@
 [package]
 name = "eqtui"
-version = "0.1.1"
+version = "0.1.2"
 description = "Terminal-native(TUI) audio effects processor for PipeWire"
 authors = ["SiputBiru <radityamahatma23@gmail.com>"]
 license = "GPL-2.0-only"
@@ -36,7 +36,7 @@ serde_json = "1.0.150"
 toml = "1.1.2"
 tracing = "0.1.44"
 tracing-error = "0.2.1"
-tracing-subscriber = "0.3.23"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tui-input = "0.15.3"
 uds = "0.4.2"
 
