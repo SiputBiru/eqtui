@@ -4,6 +4,26 @@ All notable changes to eqtui are documented here.
 
 ---
 
+## [0.1.2] — 2026-07-10
+
+### Logging Rework — stderr & systemd-friendly
+
+- **Dropped the log file** (`~/.local/share/eqtui/eqtui.log`).  Logs are now
+  routed by mode:
+  - **Daemon / CLI** → stderr (terminal or `journalctl` under systemd).
+  - **TUI** → `~/.local/share/eqtui/eqtui-tui.log` (alternate screen must
+    not be polluted by stray stderr output).
+- **`RUST_LOG` support** — control verbosity at runtime.  Defaults to
+  `eqtui=info`.  Example: `RUST_LOG=eqtui=debug eqtui daemon`.
+- **Centralised logging init** in `src/logging.rs` — removes ~20 lines of
+  boilerplate from `main.rs`.
+- **Removed dead code** in `daemon::run_daemon()` — was reopening the log
+  file that `main()` already set up; did nothing useful.
+- **Updated README** — logging behaviour, `RUST_LOG` usage, and a guide
+  for running as a systemd user service.
+
+---
+
 ## [0.1.1-alpha.7] — 2026-05-29
 
 ### Debloat — `daemon.rs`
