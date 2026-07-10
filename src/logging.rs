@@ -24,8 +24,7 @@ use tracing_subscriber::prelude::*;
 /// Both modes respect the `RUST_LOG` environment variable (falls back to
 /// `eqtui=info` when unset).
 pub fn init(mode: &str) -> crate::AppResult<()> {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("eqtui=info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("eqtui=info"));
 
     let is_tui = matches!(mode, "attach" | "");
 
@@ -54,10 +53,7 @@ pub fn init(mode: &str) -> crate::AppResult<()> {
     } else {
         // Daemon / CLI: stderr (terminal or journald).
         subscriber
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .with_writer(std::io::stderr),
-            )
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
             .with(tracing_error::ErrorLayer::default())
             .init();
     }
