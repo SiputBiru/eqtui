@@ -6,9 +6,9 @@
 
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
+use std::os::unix::fs::{DirBuilderExt, FileTypeExt, PermissionsExt};
 use std::os::unix::io::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -19,7 +19,9 @@ use std::time::Duration;
 
 use pipewire::channel;
 use tracing::{debug, error, info, warn};
+use uds::UnixStreamExt;
 
+use crate::paths::{lock_path, socket_path, validate_runtime_dir};
 use crate::pipeline::{Pipeline, SAMPLE_RATE};
 use crate::protocol::{DaemonStatus, PushEvent, Request, Response};
 use crate::state::{EqBand, FilterState, NodeInfo, NullSinkState, PwCommand, PwEvent};
@@ -209,8 +211,44 @@ impl DaemonState {
 // Sets up the lock file, starts the PipeWire pipeline, and listens
 // on a Unix socket for TUI/CLI client connections.
 
+/// Returns `true` if the connected peer belongs to the expected uid.
+///
+/// Uses `SO_PEERCRED` (via `uds`) so a swapped-out or misconfigured runtime
+/// directory cannot open the command socket to other users. On failure to
+/// read credentials the connection is rejected (fail closed).
+fn peer_is_self(stream: &UnixStream, euid: u32) -> bool {
+    match stream.initial_peer_credentials() {
+        Ok(cred) if cred.euid() == euid => true,
+        Ok(cred) => {
+            warn!(
+                euid = cred.euid(),
+                "Rejected IPC connection from foreign uid"
+            );
+            false
+        }
+        Err(e) => {
+            warn!(%e, "Could not read peer credentials; rejecting");
+            false
+        }
+    }
+}
+
 pub fn run_daemon() -> AppResult<()> {
     tracing::info!("Daemon starting up");
+
+    // Fail closed: refuse to run in an unsafe runtime directory.
+    let run_dir = validate_runtime_dir()?;
+
+    // Private 0700 subdirectory for the socket + lock. The subdir matters
+    // because bind→chmod has a small window where the socket node exists with
+    // umask-derived perms; inside a 0700 dir that window is unreachable.
+    let eqtui_dir = run_dir.join("eqtui");
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&eqtui_dir)?;
+    // create() doesn't tighten perms on an existing dir — enforce:
+    fs::set_permissions(&eqtui_dir, fs::Permissions::from_mode(0o700))?;
 
     // Acquire exclusive lock so only one daemon instance runs.
     let lock_path = lock_path()?;
@@ -276,13 +314,28 @@ pub fn run_daemon() -> AppResult<()> {
             }
         })?;
 
-    // Remove stale socket from a previous crashed run.
-    let _ = fs::remove_file(&socket_path);
-    if let Some(parent) = socket_path.parent() {
-        fs::create_dir_all(parent)?;
+    // Remove a stale socket from a previous crashed run — but ONLY if it
+    // really is a socket. Never unlink a regular file or symlink planted at
+    // the socket path.
+    match fs::symlink_metadata(&socket_path) {
+        Ok(md) if md.file_type().is_socket() => fs::remove_file(&socket_path)?,
+        Ok(_) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!(
+                    "{} exists and is not a socket; refusing to remove",
+                    socket_path.display()
+                ),
+            )
+            .into());
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
     }
 
     let listener = UnixListener::bind(&socket_path)?;
+    // Explicit 0600 regardless of umask — the daemon is the enforcer.
+    fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
     info!("Daemon listening on {}", socket_path.display());
 
     let mut client_id_counter: u64 = 0;
@@ -299,6 +352,15 @@ pub fn run_daemon() -> AppResult<()> {
                 continue;
             }
         };
+
+        // Verify the peer's UID before serving it. Even with a 0600 socket in
+        // a 0700 directory, SO_PEERCRED defends against a swapped-out runtime
+        // dir and gives us the peer PID for logs.
+        // SAFETY: geteuid() never fails and takes no arguments.
+        let euid = unsafe { libc::geteuid() };
+        if !peer_is_self(&stream, euid) {
+            continue; // stream dropped = connection closed
+        }
 
         let handler_state = state.clone();
         let handler_cmd_tx = cmd_tx.clone();
@@ -505,22 +567,53 @@ fn dispatch_request(
     }
 }
 
-fn socket_path() -> crate::AppResult<PathBuf> {
-    Ok(runtime_dir()?.join("eqtui.sock"))
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-fn lock_path() -> crate::AppResult<PathBuf> {
-    Ok(runtime_dir()?.join("eqtui.lock"))
-}
+    /// A same-process socket pair reports the caller's own uid on Linux.
+    #[test]
+    fn peer_credentials_report_own_uid() {
+        // Arrange
+        let (a, b) = UnixStream::pair().expect("socketpair should succeed");
+        let euid = unsafe { libc::geteuid() };
 
-fn runtime_dir() -> crate::AppResult<PathBuf> {
-    match std::env::var("XDG_RUNTIME_DIR") {
-        Ok(dir) if !dir.is_empty() => Ok(PathBuf::from(dir)),
-        _ => Err(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "XDG_RUNTIME_DIR environment variable is not set or is empty. \
-             This is required for secure operation.",
-        )
-        .into()),
+        // Act
+        let cred_a = a.initial_peer_credentials().expect("peer creds readable");
+        let cred_b = b.initial_peer_credentials().expect("peer creds readable");
+
+        // Assert
+        assert_eq!(cred_a.euid(), euid);
+        assert_eq!(cred_b.euid(), euid);
+    }
+
+    /// `peer_is_self` accepts a same-uid peer.
+    #[test]
+    fn peer_is_self_accepts_same_user() {
+        // Arrange
+        let (a, _b) = UnixStream::pair().expect("socketpair should succeed");
+        let euid = unsafe { libc::geteuid() };
+
+        // Act
+        let accepted = peer_is_self(&a, euid);
+
+        // Assert
+        assert!(accepted, "same-euid peer must be accepted");
+    }
+
+    /// `peer_is_self` rejects a peer whose uid differs from the expected one.
+    #[test]
+    fn peer_is_self_rejects_foreign_uid() {
+        // Arrange
+        let (a, _b) = UnixStream::pair().expect("socketpair should succeed");
+        let euid = unsafe { libc::geteuid() };
+        // Flip the lowest bit: always a different uid from our own.
+        let foreign = euid ^ 1;
+
+        // Act
+        let accepted = peer_is_self(&a, foreign);
+
+        // Assert
+        assert!(!accepted, "peer with foreign uid must be rejected");
     }
 }

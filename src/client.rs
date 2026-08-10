@@ -4,12 +4,13 @@
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use tracing::{info, warn};
 
+use crate::paths::socket_path;
 use crate::protocol::{DaemonStatus, PushEvent, Request, Response};
 use crate::state::EqBand;
 
@@ -62,7 +63,7 @@ impl DaemonClient {
         .into())
     }
 
-    fn try_connect(path: &PathBuf) -> std::io::Result<Self> {
+    fn try_connect(path: &Path) -> std::io::Result<Self> {
         let stream = UnixStream::connect(path)?;
 
         // Set 5s timeouts to prevent TUI/CLI hangs if the daemon is unresponsive.
@@ -189,28 +190,6 @@ fn check_ok(resp: Response) -> crate::AppResult<()> {
         Ok(())
     } else {
         Err(std::io::Error::other(resp.error.unwrap_or_else(|| "Unknown error".into())).into())
-    }
-}
-
-fn socket_path() -> crate::AppResult<PathBuf> {
-    Ok(runtime_dir()?.join("eqtui.sock"))
-}
-
-/// Returns the XDG runtime directory for the current user.
-///
-/// This directory is used for the Unix socket.
-/// Strict requirement for `XDG_RUNTIME_DIR` to be set for security;
-/// falling back to /tmp would allow other local users to intercept
-/// or control the daemon.
-fn runtime_dir() -> crate::AppResult<PathBuf> {
-    match std::env::var("XDG_RUNTIME_DIR") {
-        Ok(dir) if !dir.is_empty() => Ok(PathBuf::from(dir)),
-        _ => Err(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "XDG_RUNTIME_DIR environment variable is not set or is empty. \
-            This is required for secure operation.",
-        )
-        .into()),
     }
 }
 
