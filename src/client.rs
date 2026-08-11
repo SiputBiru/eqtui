@@ -20,20 +20,37 @@ pub struct DaemonClient {
     /// Push events that arrived during a synchronous `request()` call
     /// are buffered here and drained by `try_read_event()`.
     pending_events: VecDeque<PushEvent>,
+    /// An auto-launched daemon, kept so it can be reaped via `try_wait()`
+    /// (no zombie) and so startup failure is detected fast. `None` when
+    /// connected to a pre-existing daemon.
+    daemon_child: Option<std::process::Child>,
 }
 
 impl DaemonClient {
     /// Connect to the daemon, auto-launching if none is running.
     pub fn connect() -> crate::AppResult<Self> {
-        let path = socket_path()?;
+        Self::connect_with_exe(&socket_path()?, None, &[])
+    }
 
-        if let Ok(client) = Self::try_connect(&path) {
+    /// Full connect logic with an explicit socket path, optional daemon
+    /// executable override, and extra env vars for the auto-launched child.
+    ///
+    /// Exists so tests can drive the auto-launch / fail-fast paths without
+    /// mutating the process environment (which is `unsafe` in edition 2024
+    /// and races parallel tests). Production callers pass `None` and `&[]` —
+    /// `exe = None` resolves to `current_exe()`.
+    fn connect_with_exe(
+        path: &Path,
+        exe: Option<&Path>,
+        spawn_env: &[(&str, &str)],
+    ) -> crate::AppResult<Self> {
+        if let Ok(client) = Self::try_connect(path) {
             info!("Connected to existing daemon");
             return Ok(client);
         }
 
         info!("No daemon found — auto-launching");
-        let daemon_pid = spawn_daemon();
+        let mut daemon_child = spawn_daemon(exe, spawn_env);
 
         let timeout_ms = std::env::var("EQTUI_DAEMON_START_TIMEOUT_MS")
             .ok()
@@ -42,18 +59,30 @@ impl DaemonClient {
         let attempts = (timeout_ms / 100).max(1);
         for _ in 0..attempts {
             std::thread::sleep(Duration::from_millis(100));
-            if let Ok(client) = Self::try_connect(&path) {
+
+            // Fail fast if the daemon died during startup (insecure runtime
+            // dir, lock conflict, ...). No zombie: try_wait reaps.
+            if let Some(child) = &mut daemon_child
+                && let Some(status) = child.try_wait().ok().flatten()
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionRefused,
+                    format!("daemon exited immediately with {status}"),
+                )
+                .into());
+            }
+
+            if let Ok(mut client) = Self::try_connect(path) {
                 info!("Connected to auto-launched daemon");
+                client.daemon_child = daemon_child.take(); // keep for reaping
                 return Ok(client);
             }
         }
 
-        if let Some(pid) = daemon_pid {
-            warn!(pid, "Daemon start timed out — sending SIGTERM to orphan");
-            #[allow(clippy::cast_possible_wrap)]
-            unsafe {
-                libc::kill(pid as libc::pid_t, libc::SIGTERM);
-            }
+        if let Some(mut child) = daemon_child {
+            warn!(pid = child.id(), "Daemon start timed out — killing");
+            let _ = child.kill(); // SIGKILL via the handle — NO pid-reuse race
+            let _ = child.wait(); // reap — no zombie
         }
 
         Err(std::io::Error::new(
@@ -81,6 +110,7 @@ impl DaemonClient {
             stream,
             reader,
             pending_events: VecDeque::new(),
+            daemon_child: None,
         })
     }
 
@@ -118,6 +148,14 @@ impl DaemonClient {
 
     /// Returns `None` when no push events are available.
     pub fn try_read_event(&mut self) -> std::io::Result<Option<PushEvent>> {
+        // Reap an auto-launched daemon that has exited (cheap, non-blocking) —
+        // avoids a <defunct> child lingering until the TUI exits.
+        if let Some(child) = &mut self.daemon_child
+            && let Ok(Some(_status)) = child.try_wait()
+        {
+            self.daemon_child = None;
+        }
+
         // Drain events that were buffered during a synchronous request()
         // before hitting the socket.  This ensures they are processed in
         // order on the next drain_events() cycle.
@@ -193,27 +231,66 @@ fn check_ok(resp: Response) -> crate::AppResult<()> {
     }
 }
 
-fn spawn_daemon() -> Option<u32> {
-    let Ok(exe) = std::env::current_exe() else {
+fn spawn_daemon(exe: Option<&Path>, spawn_env: &[(&str, &str)]) -> Option<std::process::Child> {
+    let exe = if let Some(e) = exe {
+        e.to_path_buf()
+    } else if let Ok(e) = std::env::current_exe() {
+        e
+    } else {
         warn!("Cannot determine own binary path — daemon auto-launch disabled");
         return None;
     };
 
     match Command::new(exe)
         .arg("daemon")
+        .envs(spawn_env.iter().copied())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
     {
         Ok(child) => {
-            let pid = child.id();
-            info!(pid, "Spawned daemon");
-            Some(pid)
+            info!(pid = child.id(), "Spawned daemon");
+            Some(child)
         }
         Err(e) => {
             warn!(%e, "Failed to spawn daemon");
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The fail-fast path: when the spawned daemon dies during startup,
+    /// `connect_with_exe` must return quickly naming the exit status — not
+    /// after the full blind timeout.
+    ///
+    /// Uses `/bin/true` as a stand-in daemon: it exits instantly with status
+    /// 0. This avoids relying on `current_exe()` (which under a lib unit test
+    /// points at the test harness, not the real binary) and needs no
+    /// `PipeWire` session — so it runs deterministically in CI.
+    #[test]
+    fn connect_fails_fast_when_daemon_exits_immediately() {
+        let dir = tempfile::tempdir().unwrap();
+        // No daemon will ever bind here; the connect must fail via try_wait.
+        let socket = dir.path().join("eqtui").join("eqtui.sock");
+
+        let start = std::time::Instant::now();
+        let Err(err) = DaemonClient::connect_with_exe(&socket, Some(Path::new("/bin/true")), &[])
+        else {
+            panic!("connect must fail when the daemon dies on startup");
+        };
+
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(1),
+            "fail-fast must not wait the full blind timeout"
+        );
+        assert!(
+            err.to_string().contains("exited immediately"),
+            "error should name the early exit, got: {err}"
+        );
     }
 }

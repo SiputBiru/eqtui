@@ -45,12 +45,15 @@ pub struct DaemonState {
     preamp: Mutex<f32>,
 
     clients: Mutex<Vec<ClientHandle>>,
-    shutting_down: AtomicBool,
+    shutting_down: Arc<AtomicBool>,
 }
 
 struct ClientHandle {
     id: u64,
     tx: mpsc::Sender<String>,
+    /// Clone kept only to unblock the handler's reader during shutdown
+    /// (`shutdown(Both)` makes the blocked `read_until` error out).
+    stream: UnixStream,
 }
 
 impl DaemonState {
@@ -67,7 +70,7 @@ impl DaemonState {
             bypass: Mutex::new(false),
             preamp: Mutex::new(0.0),
             clients: Mutex::new(Vec::new()),
-            shutting_down: AtomicBool::new(false),
+            shutting_down: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -168,6 +171,15 @@ impl DaemonState {
             }
         };
 
+        // Second clone used solely to unblock the reader on shutdown.
+        let shutdown_stream = match stream.try_clone() {
+            Ok(s) => s,
+            Err(e) => {
+                warn!(%e, "Failed to clone client stream for shutdown");
+                return;
+            }
+        };
+
         thread::Builder::new()
             .name(format!("client-{client_id}-writer"))
             .spawn(move || {
@@ -180,10 +192,11 @@ impl DaemonState {
             })
             .ok();
 
-        self.clients
-            .lock()
-            .unwrap()
-            .push(ClientHandle { id: client_id, tx });
+        self.clients.lock().unwrap().push(ClientHandle {
+            id: client_id,
+            tx,
+            stream: shutdown_stream,
+        });
         info!(client_id, "Client connected");
     }
 
@@ -308,14 +321,15 @@ pub fn run_daemon() -> AppResult<()> {
 
     // PipeWire mainloop thread — audio processing and graph management.
     let pw_pipeline = pipeline.clone();
+    let pw_shutdown = state.shutting_down.clone(); // Arc<AtomicBool>, shared
     let pw_thread = thread::Builder::new().name("pw".into()).spawn(move || {
-        pw::run(pw_tx, cmd_rx, pw_pipeline);
+        pw::run(pw_tx, cmd_rx, pw_pipeline, pw_shutdown);
     })?;
 
     // Bridge thread — forwards PwEvents from PipeWire to the shared state.
     let bridge_state = state.clone();
     let bridge_socket = socket_path.clone();
-    thread::Builder::new()
+    let bridge = thread::Builder::new()
         .name("pw-bridge".into())
         .spawn(move || {
             while let Ok(event) = pw_rx.recv() {
@@ -332,7 +346,7 @@ pub fn run_daemon() -> AppResult<()> {
 
     // Peak broadcast thread — pushes peak meter updates at ~15 fps.
     let peak_state = state.clone();
-    thread::Builder::new()
+    let peak = thread::Builder::new()
         .name("peak-broadcast".into())
         .spawn(move || {
             loop {
@@ -370,6 +384,9 @@ pub fn run_daemon() -> AppResult<()> {
     info!("Daemon listening on {}", socket_path.display());
 
     let mut client_id_counter: u64 = 0;
+    // Kept so shutdown can join handlers; finished ones are reaped on each
+    // accept so the Vec doesn't grow forever.
+    let mut client_handles: Vec<thread::JoinHandle<()>> = Vec::new();
 
     for stream in listener.incoming() {
         if state.shutting_down.load(Ordering::Acquire) {
@@ -393,21 +410,54 @@ pub fn run_daemon() -> AppResult<()> {
             continue; // stream dropped = connection closed
         }
 
+        client_handles.retain(|h| !h.is_finished());
         let handler_state = state.clone();
         let handler_cmd_tx = cmd_tx.clone();
-
-        thread::Builder::new()
+        let h = thread::Builder::new()
             .name(format!("client-{client_id_counter}"))
             .spawn(move || {
                 handle_client(stream, handler_state, handler_cmd_tx, client_id_counter);
             })?;
+        client_handles.push(h);
 
         client_id_counter += 1;
     }
 
     info!("Daemon shutting down");
+
+    // 1. Tell PipeWire to quit: mainloop returns, pw::run cancels + joins its
+    //    checker, joins the link worker, then returns — dropping the last
+    //    PwEvent senders. Then join the pw thread.
     let _ = cmd_tx.send(PwCommand::Terminate);
-    let _ = pw_thread.join();
+    if let Err(e) = pw_thread.join() {
+        error!("pw thread panicked: {e:?}");
+    }
+
+    // 2. Bridge: its pw_rx.recv() errors once all senders are gone; it sees
+    //    shutting_down and returns quietly. Cannot hang — every sender drops
+    //    before pw_thread.join() returns (see load-bearing destroy() frees).
+    if let Err(e) = bridge.join() {
+        error!("pw-bridge panicked: {e:?}");
+    }
+
+    // 3. Peak broadcaster: exits within 66 ms on the shutdown flag.
+    if let Err(e) = peak.join() {
+        error!("peak-broadcast panicked: {e:?}");
+    }
+
+    // 4. Clients: close every stream so blocked read_until calls error out,
+    //    then join the handlers. Drain first — holding the clients lock across
+    //    shutdown() would block handlers trying to unregister.
+    let drained: Vec<ClientHandle> = state.clients.lock().unwrap().drain(..).collect();
+    for c in drained {
+        let _ = c.stream.shutdown(std::net::Shutdown::Both);
+    }
+    for h in client_handles {
+        let _ = h.join();
+    }
+    // Writer threads stay detached: they die when their channel closes (the
+    // ClientHandle senders were dropped by the drain above) at the latest.
+
     let _ = fs::remove_file(&socket_path);
     info!("Daemon exited cleanly");
     Ok(())

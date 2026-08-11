@@ -1,7 +1,7 @@
 // Copyright (C) 2026 SiputBiru <radityamahatma23@gmail.com>
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! Integration tests for IPC request validation (plan 02).
+//! Integration tests for IPC request validation.
 //!
 //! These spawn the real daemon binary against a tempdir `XDG_RUNTIME_DIR`
 //! and exercise the negative paths added by the validation work:

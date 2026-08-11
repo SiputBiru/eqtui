@@ -6,6 +6,7 @@ use std::{
     ffi::CString,
     os::raw::c_void,
     ptr,
+    rc::Rc,
     sync::{Arc, mpsc},
 };
 
@@ -25,7 +26,7 @@ pub(crate) struct NullSinkListenerData {
     pub(crate) core_raw: *mut pipewire_sys::pw_core,
     pub(crate) pipeline: Arc<Pipeline>,
     pub(crate) audio_eq: *mut AudioEq,
-    pub(crate) filter_cell_ptr: *mut Cell<Option<FilterHandle>>,
+    pub(crate) filter_cell: Rc<Cell<Option<FilterHandle>>>,
     pub(crate) null_sink_id_cell_ptr: *mut Cell<Option<u32>>,
     pub(crate) filter_created: Cell<bool>,
 }
@@ -101,7 +102,7 @@ pub(crate) unsafe extern "C" fn bound_cb(data: *mut c_void, global_id: u32) {
                 nd.audio_eq,
             );
             if let Some(h) = handle {
-                (*nd.filter_cell_ptr).set(Some(h));
+                nd.filter_cell.set(Some(h));
             }
             // Monitor links are created by state_changed_cb when the
             // filter reaches STREAMING state (ports guaranteed ready).

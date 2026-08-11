@@ -6,7 +6,7 @@ use std::mem;
 use std::os::raw::c_void;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -24,7 +24,12 @@ use super::links::{
 };
 use super::null_sink::{NullSinkHandle, NullSinkListenerData, bound_cb, create_null_sink};
 
-pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pipeline>) {
+pub fn run(
+    tx: mpsc::Sender<PwEvent>,
+    rx: Receiver<PwCommand>,
+    pipeline: Arc<Pipeline>,
+    shutdown: Arc<AtomicBool>,
+) {
     let mainloop = match MainLoopRc::new(None) {
         Ok(ml) => ml,
         Err(e) => {
@@ -127,11 +132,17 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
     // audio thread is never blocked by fork/exec/waitpid.
     let ns_checker_tx = tx.clone();
     let ns_checker = ns_id_atomic.clone();
-    std::thread::Builder::new()
+    let ns_shutdown = shutdown.clone();
+    let ns_checker_handle = std::thread::Builder::new()
         .name("null-sink-checker".into())
         .spawn(move || {
             loop {
                 std::thread::sleep(Duration::from_millis(500));
+                // Re-check AFTER the sleep, BEFORE any fork/exec of pw-link —
+                // never spawn pw-link against objects being torn down.
+                if ns_shutdown.load(Ordering::Acquire) {
+                    break;
+                }
                 let ns_id = ns_checker.load(Ordering::Acquire);
                 if ns_id > 0 {
                     let has_source = check_null_sink_input_source(ns_id);
@@ -140,7 +151,7 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
                         Some(false) => PwEvent::NullSinkInputState { has_source: false },
                         None => PwEvent::NullSinkInputUnknown,
                     };
-                    // Exit cleanly when the receiver is dropped (daemon shutting down)
+                    // Backstop: exit when the receiver is dropped.
                     if ns_checker_tx.send(event).is_err() {
                         break;
                     }
@@ -150,7 +161,12 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
         .expect("failed to spawn null-sink-checker thread");
 
     let core_raw = core.as_raw_ptr().cast::<pipewire_sys::pw_core>();
-    let filter_cell: Cell<Option<FilterHandle>> = Cell::new(None);
+    // Rc (not a raw pointer to a stack local): `bound_cb` fills this in LATER,
+    // on the mainloop, while the `Terminate` command closure reads it. Both
+    // must observe the SAME cell — a moved-by-value Cell would give the
+    // Terminate closure a private copy that never sees the filter handle,
+    // leaking the filter (and its PwEvent sender) on shutdown.
+    let filter_cell: Rc<Cell<Option<FilterHandle>>> = Rc::new(Cell::new(None));
     let nullsink_cell: Cell<Option<NullSinkHandle>> = Cell::new(None);
 
     let audio_eq = Box::into_raw(Box::new(AudioEq::new(SAMPLE_RATE)));
@@ -163,7 +179,7 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
             core_raw,
             pipeline: pipeline.clone(),
             audio_eq,
-            filter_cell_ptr: (&raw const filter_cell).cast_mut(),
+            filter_cell: filter_cell.clone(),
             null_sink_id_cell_ptr: Rc::as_ptr(&null_sink_id_cell).cast_mut(),
             filter_created: Cell::new(false),
         });
@@ -217,9 +233,10 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
         }
     });
 
+    let cmd_filter_cell = filter_cell.clone(); // same Rc — Terminate sees bound_cb's handle
     let cmd_receiver = rx.attach(mainloop.loop_(), move |cmd| match cmd {
         PwCommand::Terminate => {
-            if let Some(handle) = filter_cell.take() {
+            if let Some(handle) = cmd_filter_cell.take() {
                 unsafe {
                     handle.destroy();
                 }
@@ -257,6 +274,14 @@ pub fn run(tx: mpsc::Sender<PwEvent>, rx: Receiver<PwCommand>, pipeline: Arc<Pip
     let _ = tx.send(PwEvent::Connected);
 
     mainloop.run();
+
+    // Mainloop has quit — stop the checker, then join it BEFORE tearing down.
+    // (Runs after Terminate: filter/nullsink destroy() already freed their
+    // boxed listener data, each of which held a `tx` clone.)
+    shutdown.store(true, Ordering::Release);
+    if let Err(e) = ns_checker_handle.join() {
+        tracing::error!("null-sink-checker panicked: {e:?}");
+    }
 
     drop(cmd_receiver);
     if let Err(e) = link_worker.join() {
