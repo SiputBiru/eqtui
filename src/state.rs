@@ -135,6 +135,12 @@ pub enum PwEvent {
     /// could not be determined (e.g. binary missing, `PipeWire` down).
     NullSinkInputUnknown,
     NullSinkError(String),
+    /// Result of an async link operation from the pw-link worker.
+    LinkResult {
+        device_id: u32,
+        connect: bool,
+        ok: bool,
+    },
     Error(String),
 }
 

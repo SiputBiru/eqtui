@@ -74,5 +74,7 @@ pub struct DaemonStatus {
     pub filter_state: FilterState,
     pub null_sink: NullSinkState,
     pub filter_node_id: Option<u32>,
-    pub connected_devices: Vec<u32>,
+    pub connected_devices: Vec<u32>, // CONFIRMED links only
+    #[serde(default)]
+    pub pending_devices: Vec<u32>, // ops in flight (connect or disconnect)
 }

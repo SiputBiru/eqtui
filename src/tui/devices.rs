@@ -39,6 +39,9 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
                 )
             } else if app.is_device_connected(node.id) {
                 Cell::new(format!(" {name}")).style(Style::default().fg(Color::Green))
+            } else if app.pending_devices.contains(&node.id) {
+                Cell::new(format!(" {name} (connecting…)"))
+                    .style(Style::default().fg(Color::Yellow))
             } else {
                 Cell::new(name)
             };
@@ -49,6 +52,8 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
                 Cell::new(node.id.to_string()),
                 if app.is_device_connected(node.id) {
                     Cell::new("C").style(Style::default().fg(Color::Green))
+                } else if app.pending_devices.contains(&node.id) {
+                    Cell::new("…").style(Style::default().fg(Color::Yellow))
                 } else {
                     Cell::new("-").dark_gray()
                 },

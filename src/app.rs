@@ -72,6 +72,8 @@ pub struct App {
     /// False when `pw-link -I` failed and the source state is unknown.
     pub null_sink_source_known: bool,
     pub connected_devices: Vec<u32>,
+    /// Device ops in flight (connect/disconnect awaiting confirmation).
+    pub pending_devices: Vec<u32>,
 
     pub eq: EqState,
     pub preamp: f32,
@@ -134,6 +136,7 @@ impl App {
             null_sink_missing: false,
             null_sink_source_known: true,
             connected_devices: Vec::new(),
+            pending_devices: Vec::new(),
             filter_node_id: None,
             filter_state: FilterState::Unconnected,
             notification: None,
@@ -240,6 +243,7 @@ impl App {
         self.null_sink = status.null_sink;
         self.filter_node_id = status.filter_node_id;
         self.connected_devices = status.connected_devices;
+        self.pending_devices = status.pending_devices;
         self.eq.bypass = status.bypass;
         self.eq.bands = status.bands;
         self.preamp = status.preamp;
@@ -372,17 +376,17 @@ impl App {
             self.notify("Filter not ready — wait for PipeWire connection");
             return Ok(());
         }
-        if self.is_device_connected(id) {
+        let already = self.is_device_connected(id) || self.pending_devices.contains(&id);
+        if already {
             if let Some(client) = &mut self.client {
                 client.disconnect_device(id)?;
             }
-            self.connected_devices.retain(|d| *d != id);
-        } else {
-            if let Some(client) = &mut self.client {
-                client.connect_device(id)?;
-            }
-            self.connected_devices.push(id);
+        } else if let Some(client) = &mut self.client {
+            client.connect_device(id)?;
         }
+        // Optimistic for the indicator; confirmation arrives via
+        // full_sync/GetStatus (the daemon is the authority).
+        self.pending_devices.push(id);
         Ok(())
     }
 }
@@ -418,6 +422,7 @@ impl App {
             null_sink_missing: false,
             null_sink_source_known: true,
             connected_devices: Vec::new(),
+            pending_devices: Vec::new(),
             filter_node_id: None,
             filter_state: FilterState::Unconnected,
             notification: None,

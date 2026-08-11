@@ -42,7 +42,8 @@ struct StatusSnapshot {
     filter_state: FilterState,
     null_sink: NullSinkState,
     filter_node_id: Option<u32>,
-    connected_devices: Vec<u32>,
+    connected_devices: Vec<u32>, // CONFIRMED links only
+    pending_devices: Vec<u32>,   // ops in flight (connect or disconnect)
 }
 
 pub struct DaemonState {
@@ -89,6 +90,7 @@ impl DaemonState {
             null_sink: s.null_sink.clone(),
             filter_node_id: s.filter_node_id,
             connected_devices: s.connected_devices.clone(),
+            pending_devices: s.pending_devices.clone(),
         }
     }
 
@@ -99,6 +101,17 @@ impl DaemonState {
                 {
                     let mut s = self.status.lock().unwrap();
                     s.nodes.clone_from(&nodes);
+                    // Reconcile routing state against reality: prune devices
+                    // that vanished (covers a connect still in flight).
+                    let before = s.connected_devices.len() + s.pending_devices.len();
+                    s.connected_devices
+                        .retain(|id| nodes.iter().any(|n| n.id == *id));
+                    s.pending_devices
+                        .retain(|id| nodes.iter().any(|n| n.id == *id));
+                    let pruned = before - (s.connected_devices.len() + s.pending_devices.len());
+                    if pruned > 0 {
+                        info!(pruned, "Pruned vanished devices from routing state");
+                    }
                 }
                 self.push_event(PushEvent::NodeList { nodes });
             }
@@ -168,6 +181,37 @@ impl DaemonState {
                 self.push_event(PushEvent::Error {
                     message: msg.clone(),
                 });
+            }
+            PwEvent::LinkResult {
+                device_id,
+                connect,
+                ok,
+            } => {
+                let mut s = self.status.lock().unwrap();
+                s.pending_devices.retain(|id| *id != *device_id);
+                match (connect, ok) {
+                    (true, true) => {
+                        if !s.connected_devices.contains(device_id) {
+                            s.connected_devices.push(*device_id);
+                        }
+                    }
+                    (true, false) => {
+                        drop(s);
+                        self.push_event(PushEvent::Error {
+                            message: format!("Failed to link device {device_id}"),
+                        });
+                    }
+                    (false, true) => {
+                        s.connected_devices.retain(|id| *id != *device_id);
+                    }
+                    (false, false) => {
+                        // Link may still exist — keep the state truthful.
+                        drop(s);
+                        self.push_event(PushEvent::Error {
+                            message: format!("Failed to unlink device {device_id}"),
+                        });
+                    }
+                }
             }
             PwEvent::NodeAdded(_) | PwEvent::NodeRemoved(_) => {}
         }
@@ -661,22 +705,40 @@ fn dispatch_request(
                     status: None,
                 };
             }
-            if s.connected_devices.contains(&node_id) {
+            // Idempotent: already connected or an op is in flight.
+            if s.connected_devices.contains(&node_id) || s.pending_devices.contains(&node_id) {
                 return Response {
                     ok: true,
                     error: None,
                     status: None,
                 };
             }
-            s.connected_devices.push(node_id);
+            s.pending_devices.push(node_id);
             drop(s); // don't hold the lock across the channel send
-            let _ = cmd_tx.send(PwCommand::ConnectDevice { filter_id, node_id });
-            info!(node_id, "Device connected");
+
+            if cmd_tx
+                .send(PwCommand::ConnectDevice { filter_id, node_id })
+                .is_err()
+            {
+                // pw thread is gone — roll back and say so.
+                state
+                    .status
+                    .lock()
+                    .unwrap()
+                    .pending_devices
+                    .retain(|id| *id != node_id);
+                return Response {
+                    ok: false,
+                    error: Some("PipeWire thread unavailable".into()),
+                    status: None,
+                };
+            }
+            info!(node_id, "Device connect queued");
             Response {
                 ok: true,
                 error: None,
                 status: None,
-            }
+            } // ok = "accepted", confirmed later
         }
 
         Request::DisconnectDevice { node_id } => {
@@ -688,10 +750,37 @@ fn dispatch_request(
                     status: None,
                 };
             };
-            s.connected_devices.retain(|id| *id != node_id);
-            drop(s); // don't hold the lock across the channel send
-            let _ = cmd_tx.send(PwCommand::DisconnectDevice { filter_id, node_id });
-            info!(node_id, "Device disconnected");
+            let is_connected = s.connected_devices.contains(&node_id);
+            let is_pending = s.pending_devices.contains(&node_id);
+            if !is_connected && !is_pending {
+                return Response {
+                    ok: false,
+                    error: Some(format!("Device {node_id} is not connected")),
+                    status: None,
+                };
+            }
+            if !is_pending {
+                s.pending_devices.push(node_id);
+            }
+            drop(s);
+
+            if cmd_tx
+                .send(PwCommand::DisconnectDevice { filter_id, node_id })
+                .is_err()
+            {
+                state
+                    .status
+                    .lock()
+                    .unwrap()
+                    .pending_devices
+                    .retain(|id| *id != node_id);
+                return Response {
+                    ok: false,
+                    error: Some("PipeWire thread unavailable".into()),
+                    status: None,
+                };
+            }
+            info!(node_id, "Device disconnect queued");
             Response {
                 ok: true,
                 error: None,
@@ -858,5 +947,92 @@ mod tests {
         for h in handles {
             h.join().unwrap();
         }
+    }
+
+    /// A connect is pending until the `LinkResult` confirms it — state never
+    /// claims "connected" before a link actually exists.
+    #[test]
+    fn connect_is_pending_until_confirmed() {
+        let (cmd_tx, cmd_rx) = pipewire::channel::channel::<PwCommand>();
+        let state = DaemonState::new(Arc::new(Pipeline::new(SAMPLE_RATE)));
+        state.status.lock().unwrap().filter_node_id = Some(42);
+
+        let resp = dispatch_request(Request::ConnectDevice { node_id: 7 }, &state, &cmd_tx);
+        assert!(resp.ok);
+        let s = state.get_status();
+        assert!(s.connected_devices.is_empty()); // NOT yet connected
+        assert!(s.pending_devices.contains(&7)); // in flight
+
+        state.handle_pw_event(PwEvent::LinkResult {
+            device_id: 7,
+            connect: true,
+            ok: true,
+        });
+        let s = state.get_status();
+        assert!(s.connected_devices.contains(&7)); // now confirmed
+        assert!(!s.pending_devices.contains(&7)); // cleared
+        drop(cmd_rx);
+    }
+
+    /// A failed link never shows as connected, and the pending entry is
+    /// cleared.
+    #[test]
+    fn failed_link_never_shows_connected() {
+        let (cmd_tx, cmd_rx) = pipewire::channel::channel::<PwCommand>();
+        let state = DaemonState::new(Arc::new(Pipeline::new(SAMPLE_RATE)));
+        state.status.lock().unwrap().filter_node_id = Some(42);
+
+        let resp = dispatch_request(Request::ConnectDevice { node_id: 7 }, &state, &cmd_tx);
+        assert!(resp.ok);
+
+        state.handle_pw_event(PwEvent::LinkResult {
+            device_id: 7,
+            connect: true,
+            ok: false,
+        });
+        let s = state.get_status();
+        assert!(s.connected_devices.is_empty());
+        assert!(!s.pending_devices.contains(&7)); // cleared
+        drop(cmd_rx);
+    }
+
+    /// Disconnect of a device that is neither connected nor pending is an
+    /// error — no pointless pw-link -d.
+    #[test]
+    fn disconnect_requires_connection() {
+        let (cmd_tx, cmd_rx) = pipewire::channel::channel::<PwCommand>();
+        let state = DaemonState::new(Arc::new(Pipeline::new(SAMPLE_RATE)));
+        state.status.lock().unwrap().filter_node_id = Some(42);
+
+        let resp = dispatch_request(Request::DisconnectDevice { node_id: 7 }, &state, &cmd_tx);
+        assert!(!resp.ok); // not connected → error
+
+        // Connect + confirm, then disconnect must be accepted.
+        let _ = dispatch_request(Request::ConnectDevice { node_id: 7 }, &state, &cmd_tx);
+        state.handle_pw_event(PwEvent::LinkResult {
+            device_id: 7,
+            connect: true,
+            ok: true,
+        });
+        let resp = dispatch_request(Request::DisconnectDevice { node_id: 7 }, &state, &cmd_tx);
+        assert!(resp.ok);
+        drop(cmd_rx);
+    }
+
+    /// A device that vanished from the node list is pruned from routing
+    /// state, even while its connect is still pending.
+    #[test]
+    fn node_list_prunes_vanished_devices() {
+        let (cmd_tx, cmd_rx) = pipewire::channel::channel::<PwCommand>();
+        let state = DaemonState::new(Arc::new(Pipeline::new(SAMPLE_RATE)));
+        state.status.lock().unwrap().filter_node_id = Some(42);
+        let _ = dispatch_request(Request::ConnectDevice { node_id: 7 }, &state, &cmd_tx);
+        assert!(state.get_status().pending_devices.contains(&7));
+
+        // The node list no longer contains device 7 (it vanished mid-op).
+        state.handle_pw_event(PwEvent::NodeList(vec![]));
+
+        assert!(state.get_status().pending_devices.is_empty());
+        drop(cmd_rx);
     }
 }

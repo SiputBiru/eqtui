@@ -3,33 +3,37 @@
 
 use std::process::Command;
 
-fn run_pw_link(args: &[&str]) -> bool {
+/// Outcome of one pw-link invocation.
+#[derive(Debug)]
+enum LinkOutcome {
+    Ok,     // link created/removed
+    Benign, // already in the desired state (idempotent no-op)
+    Failed, // genuine failure
+}
+
+fn run_pw_link(args: &[&str]) -> LinkOutcome {
     let output = match Command::new("pw-link").args(args).output() {
         Ok(o) => o,
         Err(e) => {
             tracing::error!("failed to execute pw-link: {e}");
-            return false;
+            return LinkOutcome::Failed;
         }
     };
 
     if output.status.success() {
         tracing::info!(args = ?args, "pw-link success");
-        return true;
+        return LinkOutcome::Ok;
     }
 
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    if stderr.contains("File exists") {
-        tracing::debug!("pw-link link already exists (skipped)");
-        return false;
-    }
-    if stderr.contains("No such file") {
-        tracing::debug!("pw-link link not found (already removed)");
-        return false;
+    if stderr.contains("File exists") || stderr.contains("No such file") {
+        tracing::debug!(args = ?args, "pw-link idempotent no-op");
+        return LinkOutcome::Benign; // already linked / already unlinked
     }
 
     tracing::error!("pw-link failed: {}", stderr.trim());
-    false
+    LinkOutcome::Failed
 }
 
 pub(crate) fn create_monitor_links(out_node_id: u32, in_node_id: u32) {
@@ -42,26 +46,38 @@ pub(crate) fn create_monitor_links(out_node_id: u32, in_node_id: u32) {
 }
 
 /// Create `PipeWire` links from the DSP filter's output ports to a target
-/// device's playback ports using `pw-link`.
-pub(crate) fn create_device_output_links(filter_id: u32, device_id: u32) {
-    for (out_port, in_port) in &[("output_FL", "playback_FL"), ("output_FR", "playback_FR")] {
-        run_pw_link(&[
-            &format!("{filter_id}:{out_port}"),
-            &format!("{device_id}:{in_port}"),
-        ]);
+/// device's playback ports using `pw-link`. Returns false if any leg failed.
+pub(crate) fn create_device_output_links(filter_id: u32, device_id: u32) -> bool {
+    let mut ok = true;
+    for (out_port, in_port) in [("output_FL", "playback_FL"), ("output_FR", "playback_FR")] {
+        // no short-circuit: attempt BOTH legs so state stays symmetric
+        ok &= !matches!(
+            run_pw_link(&[
+                &format!("{filter_id}:{out_port}"),
+                &format!("{device_id}:{in_port}"),
+            ]),
+            LinkOutcome::Failed
+        );
     }
+    ok
 }
 
 /// Remove `PipeWire` links between the DSP filter's output ports and a
-/// target device's playback ports using `pw-link -d`.
-pub(crate) fn remove_device_output_links(filter_id: u32, device_id: u32) {
-    for (out_port, in_port) in &[("output_FL", "playback_FL"), ("output_FR", "playback_FR")] {
-        run_pw_link(&[
-            "-d",
-            &format!("{filter_id}:{out_port}"),
-            &format!("{device_id}:{in_port}"),
-        ]);
+/// target device's playback ports using `pw-link -d`. Returns false if any
+/// leg failed.
+pub(crate) fn remove_device_output_links(filter_id: u32, device_id: u32) -> bool {
+    let mut ok = true;
+    for (out_port, in_port) in [("output_FL", "playback_FL"), ("output_FR", "playback_FR")] {
+        ok &= !matches!(
+            run_pw_link(&[
+                "-d",
+                &format!("{filter_id}:{out_port}"),
+                &format!("{device_id}:{in_port}"),
+            ]),
+            LinkOutcome::Failed
+        );
     }
+    ok
 }
 
 /// Check whether any `PipeWire` link routes audio INTO the null sink's

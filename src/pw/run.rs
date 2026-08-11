@@ -223,13 +223,21 @@ pub fn run(
     let mainloop_cmd = mainloop.clone();
 
     let (link_tx, link_rx) = mpsc::channel::<(u32, u32, bool)>();
+    let link_result_tx = tx.clone();
     let link_worker = std::thread::spawn(move || {
         for (filter_id, device_id, connect) in link_rx {
-            if connect {
-                create_device_output_links(filter_id, device_id);
+            let ok = if connect {
+                create_device_output_links(filter_id, device_id)
             } else {
-                remove_device_output_links(filter_id, device_id);
-            }
+                remove_device_output_links(filter_id, device_id)
+            };
+            // If this send fails the daemon is shutting down — nothing to
+            // report to.
+            let _ = link_result_tx.send(PwEvent::LinkResult {
+                device_id,
+                connect,
+                ok,
+            });
         }
     });
 
