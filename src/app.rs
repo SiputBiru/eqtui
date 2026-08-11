@@ -176,7 +176,7 @@ impl App {
         Ok(())
     }
 
-    pub fn drain_events(&mut self) -> AppResult<()> {
+    pub fn drain_events(&mut self) -> Result<(), crate::client::ClientError> {
         loop {
             let event = {
                 let Some(client) = &mut self.client else {
