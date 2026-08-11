@@ -4,7 +4,7 @@ All notable changes to eqtui are documented here.
 
 ---
 
-## [Unreleased]
+## [0.1.3] — 2026-08-11
 
 ### Daemon — harden IPC authorization
 
