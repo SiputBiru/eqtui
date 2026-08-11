@@ -30,20 +30,31 @@ use crate::state::{
 };
 use crate::{AppResult, pw};
 
+/// One logical daemon status, protected by a single mutex so a snapshot is
+/// internally consistent by construction.
+#[derive(Default)]
+struct StatusSnapshot {
+    bands: Vec<EqBand>,
+    bypass: bool,
+    preamp: f32,
+    nodes: Vec<NodeInfo>,
+    pw_connected: bool,
+    filter_state: FilterState,
+    null_sink: NullSinkState,
+    filter_node_id: Option<u32>,
+    connected_devices: Vec<u32>,
+}
+
 pub struct DaemonState {
     pub pipeline: Arc<Pipeline>,
 
-    nodes: Mutex<Vec<NodeInfo>>,
-    pw_connected: Mutex<bool>,
-    filter_node_id: Mutex<Option<u32>>,
-    filter_state: Mutex<FilterState>,
-    null_sink: Mutex<NullSinkState>,
-    connected_devices: Mutex<Vec<u32>>,
+    // One lock for the whole status snapshot — atomic reads and writes.
+    status: Mutex<StatusSnapshot>,
 
-    eq_bands: Mutex<Vec<EqBand>>,
-    bypass: Mutex<bool>,
-    preamp: Mutex<f32>,
-
+    // Not part of the status snapshot; operational only. Lock order rule:
+    // `status` → `clients`, never the reverse. In practice: push_event
+    // (locks `clients`) must only ever be called with no lock held; mutation
+    // code locks `status`, drops it, THEN pushes.
     clients: Mutex<Vec<ClientHandle>>,
     shutting_down: Arc<AtomicBool>,
 }
@@ -60,31 +71,24 @@ impl DaemonState {
     pub fn new(pipeline: Arc<Pipeline>) -> Self {
         Self {
             pipeline,
-            nodes: Mutex::new(Vec::new()),
-            pw_connected: Mutex::new(false),
-            filter_node_id: Mutex::new(None),
-            filter_state: Mutex::new(FilterState::Unconnected),
-            null_sink: Mutex::new(NullSinkState::NotLoaded),
-            connected_devices: Mutex::new(Vec::new()),
-            eq_bands: Mutex::new(Vec::new()),
-            bypass: Mutex::new(false),
-            preamp: Mutex::new(0.0),
+            status: Mutex::new(StatusSnapshot::default()),
             clients: Mutex::new(Vec::new()),
             shutting_down: Arc::new(AtomicBool::new(false)),
         }
     }
 
     pub fn get_status(&self) -> DaemonStatus {
+        let s = self.status.lock().unwrap();
         DaemonStatus {
-            bands: self.eq_bands.lock().unwrap().clone(),
-            bypass: *self.bypass.lock().unwrap(),
-            preamp: *self.preamp.lock().unwrap(),
-            nodes: self.nodes.lock().unwrap().clone(),
-            pw_connected: *self.pw_connected.lock().unwrap(),
-            filter_state: self.filter_state.lock().unwrap().clone(),
-            null_sink: self.null_sink.lock().unwrap().clone(),
-            filter_node_id: *self.filter_node_id.lock().unwrap(),
-            connected_devices: self.connected_devices.lock().unwrap().clone(),
+            bands: s.bands.clone(),
+            bypass: s.bypass,
+            preamp: s.preamp,
+            nodes: s.nodes.clone(),
+            pw_connected: s.pw_connected,
+            filter_state: s.filter_state.clone(),
+            null_sink: s.null_sink.clone(),
+            filter_node_id: s.filter_node_id,
+            connected_devices: s.connected_devices.clone(),
         }
     }
 
@@ -92,17 +96,24 @@ impl DaemonState {
         match &event {
             PwEvent::NodeList(nodes) => {
                 let nodes = nodes.clone();
-                (*self.nodes.lock().unwrap()).clone_from(&nodes);
+                {
+                    let mut s = self.status.lock().unwrap();
+                    s.nodes.clone_from(&nodes);
+                }
                 self.push_event(PushEvent::NodeList { nodes });
             }
             PwEvent::Connected => {
-                *self.pw_connected.lock().unwrap() = true;
+                self.status.lock().unwrap().pw_connected = true;
                 self.push_event(PushEvent::StateChange {
                     state: "connected".into(),
                 });
             }
             PwEvent::FilterStateChanged(state) => {
-                *self.filter_state.lock().unwrap() = state.clone();
+                {
+                    let mut s = self.status.lock().unwrap();
+                    s.filter_state = state.clone();
+                } // lock released BEFORE push_event (which locks `clients`)
+
                 self.push_event(PushEvent::FilterStateChanged {
                     state: state.clone(),
                 });
@@ -119,11 +130,11 @@ impl DaemonState {
                 }
             }
             PwEvent::FilterReady { node_id } => {
-                *self.filter_node_id.lock().unwrap() = Some(*node_id);
+                self.status.lock().unwrap().filter_node_id = Some(*node_id);
                 self.push_event(PushEvent::FilterReady { node_id: *node_id });
             }
             PwEvent::NullSinkCreated { module_id } => {
-                *self.null_sink.lock().unwrap() = NullSinkState::Loaded {
+                self.status.lock().unwrap().null_sink = NullSinkState::Loaded {
                     module_id: *module_id,
                     has_source: false,
                 };
@@ -132,9 +143,11 @@ impl DaemonState {
                 });
             }
             PwEvent::NullSinkInputState { has_source } => {
-                let mut ns = self.null_sink.lock().unwrap();
-                if let NullSinkState::Loaded { has_source: hs, .. } = &mut *ns {
-                    *hs = *has_source;
+                {
+                    let mut s = self.status.lock().unwrap();
+                    if let NullSinkState::Loaded { has_source: hs, .. } = &mut s.null_sink {
+                        *hs = *has_source;
+                    }
                 }
                 self.push_event(PushEvent::SourceActive {
                     active: *has_source,
@@ -578,7 +591,7 @@ fn dispatch_request(
                 };
             }
             let count = bands.len();
-            (*state.eq_bands.lock().unwrap()).clone_from(&bands);
+            state.status.lock().unwrap().bands.clone_from(&bands);
             let _ = cmd_tx.send(PwCommand::UpdateEq { bands });
             info!(count, "Bands queued for EQ update");
             Response {
@@ -598,8 +611,11 @@ fn dispatch_request(
                     status: None,
                 };
             }
-            *state.preamp.lock().unwrap() = gain;
-            state.pipeline.set_preamp(gain);
+            // WHY the double write: Pipeline's atomics are read by the
+            // real-time audio callback, which must never block on a mutex.
+            // The status copy is what GetStatus reports. Keep both.
+            state.status.lock().unwrap().preamp = gain; // authoritative for UI
+            state.pipeline.set_preamp(gain); // authoritative for AUDIO
             info!(gain, "Preamp updated");
             Response {
                 ok: true,
@@ -609,7 +625,8 @@ fn dispatch_request(
         }
 
         Request::SetBypass { bypass } => {
-            *state.bypass.lock().unwrap() = bypass;
+            // Same dual-write rationale as SetPreamp.
+            state.status.lock().unwrap().bypass = bypass;
             state.pipeline.set_bypass(bypass);
             info!(bypass, "Bypass toggled");
             Response {
@@ -620,7 +637,8 @@ fn dispatch_request(
         }
 
         Request::ConnectDevice { node_id } => {
-            let Some(filter_id) = *state.filter_node_id.lock().unwrap() else {
+            let mut s = state.status.lock().unwrap();
+            let Some(filter_id) = s.filter_node_id else {
                 return Response {
                     ok: false,
                     error: Some("Filter not ready yet".into()),
@@ -634,9 +652,7 @@ fn dispatch_request(
                     status: None,
                 };
             }
-            if let Some(ns_id) = state.null_sink.lock().unwrap().module_id()
-                && node_id == ns_id
-            {
+            if s.null_sink.module_id() == Some(node_id) {
                 return Response {
                     ok: false,
                     error: Some(
@@ -645,17 +661,15 @@ fn dispatch_request(
                     status: None,
                 };
             }
-            {
-                let devices = state.connected_devices.lock().unwrap();
-                if devices.contains(&node_id) {
-                    return Response {
-                        ok: true,
-                        error: None,
-                        status: None,
-                    };
-                }
+            if s.connected_devices.contains(&node_id) {
+                return Response {
+                    ok: true,
+                    error: None,
+                    status: None,
+                };
             }
-            state.connected_devices.lock().unwrap().push(node_id);
+            s.connected_devices.push(node_id);
+            drop(s); // don't hold the lock across the channel send
             let _ = cmd_tx.send(PwCommand::ConnectDevice { filter_id, node_id });
             info!(node_id, "Device connected");
             Response {
@@ -666,18 +680,16 @@ fn dispatch_request(
         }
 
         Request::DisconnectDevice { node_id } => {
-            let Some(filter_id) = *state.filter_node_id.lock().unwrap() else {
+            let mut s = state.status.lock().unwrap();
+            let Some(filter_id) = s.filter_node_id else {
                 return Response {
                     ok: false,
                     error: Some("Filter not ready yet".into()),
                     status: None,
                 };
             };
-            state
-                .connected_devices
-                .lock()
-                .unwrap()
-                .retain(|id| *id != node_id);
+            s.connected_devices.retain(|id| *id != node_id);
+            drop(s); // don't hold the lock across the channel send
             let _ = cmd_tx.send(PwCommand::DisconnectDevice { filter_id, node_id });
             info!(node_id, "Device disconnected");
             Response {
@@ -780,5 +792,71 @@ mod tests {
 
         // Assert — the first instance's PID survived B's attempt.
         assert_eq!(std::fs::read_to_string(&path).unwrap(), first_pid);
+    }
+
+    /// A profile apply (bands + preamp changed under ONE lock) is observed
+    /// atomically by any reader — there is no interleaving that yields the
+    /// new bands with the old preamp.
+    #[test]
+    fn status_snapshot_is_internally_consistent() {
+        use crate::state::FilterType;
+        let state = DaemonState::new(Arc::new(Pipeline::new(SAMPLE_RATE)));
+
+        // Simulate a profile apply: bands + preamp change under ONE lock.
+        {
+            let mut s = state.status.lock().unwrap();
+            s.bands = vec![EqBand {
+                frequency: 100.0,
+                gain: 3.0,
+                q: 1.0,
+                filter_type: FilterType::Peak,
+            }];
+            s.preamp = -6.0;
+        }
+
+        // Any reader now sees the pair atomically.
+        let status = state.get_status();
+        assert_eq!(status.bands.len(), 1);
+        assert!((status.preamp - (-6.0)).abs() < f32::EPSILON);
+    }
+
+    /// Concurrent readers never observe a mixed snapshot: while a writer
+    /// toggles `filter_state` + `filter_node_id` together under one lock,
+    /// every observed snapshot satisfies the cross-field invariant.
+    #[test]
+    fn concurrent_get_status_never_sees_mixed_state() {
+        let state = Arc::new(DaemonState::new(Arc::new(Pipeline::new(SAMPLE_RATE))));
+        let mut handles = Vec::new();
+
+        // Writer: toggles filter_state + filter_node_id together.
+        let w = state.clone();
+        handles.push(std::thread::spawn(move || {
+            for _ in 0..200 {
+                let mut s = w.status.lock().unwrap();
+                s.filter_state = FilterState::Streaming;
+                s.filter_node_id = Some(1);
+                std::thread::yield_now();
+                s.filter_state = FilterState::Unconnected;
+                s.filter_node_id = None;
+                std::thread::yield_now();
+            }
+        }));
+
+        // Readers: Streaming must imply filter_node_id is set.
+        for _ in 0..4 {
+            let r = state.clone();
+            handles.push(std::thread::spawn(move || {
+                for _ in 0..200 {
+                    let s = r.get_status();
+                    if s.filter_state == FilterState::Streaming {
+                        assert_eq!(s.filter_node_id, Some(1));
+                    }
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
     }
 }

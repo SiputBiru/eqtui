@@ -54,10 +54,14 @@ impl fmt::Display for NodeInfo {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub enum NullSinkState {
+    #[default]
     NotLoaded,
-    Loaded { module_id: u32, has_source: bool },
+    Loaded {
+        module_id: u32,
+        has_source: bool,
+    },
 }
 
 impl NullSinkState {
@@ -86,8 +90,9 @@ impl NullSinkState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub enum FilterState {
+    #[default]
     Unconnected,
     Connecting,
     Paused,
