@@ -5,10 +5,11 @@
 //! TUI/CLI clients over a Unix-domain socket.
 
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Seek, Write};
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, PermissionsExt};
 use std::os::unix::io::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::Path;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -233,6 +234,46 @@ fn peer_is_self(stream: &UnixStream, euid: u32) -> bool {
     }
 }
 
+/// Acquires the single-instance lock and records this process's PID.
+///
+/// Ordering matters: open WITHOUT truncating, take the flock, and only then
+/// replace the file contents. A second instance must never erase the running
+/// daemon's PID before it discovers it failed to get the lock.
+///
+/// Returns the locked, PID-written file handle. The caller must keep it alive
+/// for as long as the daemon runs — dropping it releases the flock and a
+/// second daemon could start.
+fn acquire_lock(path: &Path) -> AppResult<fs::File> {
+    // Open WITHOUT truncating — a second instance must not destroy
+    // the running daemon's metadata before it owns the lock.
+    let mut lock_file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path)?;
+
+    // SAFETY: flock is async-signal-safe. LOCK_NB → fail fast instead of blocking.
+    if unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == -1 {
+        // Best-effort: tell the user which PID holds the lock.
+        let mut pid = String::new();
+        let _ = lock_file.read_to_string(&mut pid);
+        eprintln!(
+            "Daemon already running (pid {}). Use `eqtui stop` to stop it first.",
+            pid.trim()
+        );
+        std::process::exit(1);
+    }
+
+    // We hold the lock — NOW it's safe to replace the metadata.
+    lock_file.set_len(0)?; // truncate while holding the lock
+    lock_file.seek(std::io::SeekFrom::Start(0))?;
+    writeln!(&lock_file, "{}", std::process::id())?;
+    lock_file.sync_all()?;
+
+    Ok(lock_file)
+}
+
 pub fn run_daemon() -> AppResult<()> {
     tracing::info!("Daemon starting up");
 
@@ -252,21 +293,9 @@ pub fn run_daemon() -> AppResult<()> {
 
     // Acquire exclusive lock so only one daemon instance runs.
     let lock_path = lock_path()?;
-    let lock_file = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&lock_path)?;
-
-    // SAFETY: flock is async-signal-safe. LOCK_NB makes it non-blocking.
-    if unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == -1 {
-        eprintln!("Daemon already running. Use `eqtui stop` to stop it first.");
-        std::process::exit(1);
-    }
-
-    // Write PID to lock file for CLI discovery.
-    writeln!(&lock_file, "{}", std::process::id())?;
-    lock_file.sync_all()?;
+    // NOTE: `lock_file` must stay alive for the whole function — dropping it
+    // releases the flock and a second daemon could start.
+    let _lock_file = acquire_lock(&lock_path)?;
 
     let socket_path = socket_path()?;
     let pipeline = Arc::new(Pipeline::new(SAMPLE_RATE));
@@ -615,5 +644,34 @@ mod tests {
 
         // Assert
         assert!(!accepted, "peer with foreign uid must be rejected");
+    }
+
+    /// A second instance opening the lock file must not be able to corrupt
+    /// the running daemon's PID before it fails to acquire the flock.
+    #[test]
+    fn second_instance_cannot_corrupt_lock() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("eqtui.lock");
+
+        // Act — first instance holds the lock and has written its PID.
+        let _first = acquire_lock(&path).unwrap();
+        let first_pid = std::fs::read_to_string(&path).unwrap();
+        // Sanity: the PID recorded is our own process.
+        assert_eq!(first_pid.trim(), std::process::id().to_string());
+
+        // Simulate instance B: open WITHOUT truncate (the fix), flock must fail.
+        let second = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        let rc = unsafe { libc::flock(second.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        assert_eq!(rc, -1);
+
+        // Assert — the first instance's PID survived B's attempt.
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), first_pid);
     }
 }
