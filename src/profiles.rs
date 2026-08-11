@@ -126,6 +126,9 @@ fn update_external_profiles(profiles: &mut [Profile]) {
             let full_path = resolve_path(path);
             match crate::autoeq::parse_peq(&full_path) {
                 Ok(preset) => {
+                    for w in &preset.warnings {
+                        tracing::warn!("{}: {w}", full_path.display());
+                    }
                     profile.bands = preset.bands;
                     profile.preamp = preset.preamp;
                 }

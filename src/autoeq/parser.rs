@@ -4,12 +4,27 @@
 use std::fs;
 use std::path::Path;
 
-use crate::state::{EqBand, FilterType};
+use crate::state::{EqBand, FilterType, MAX_ABS_GAIN_DB, MAX_FREQ_HZ, MAX_Q, MIN_FREQ_HZ, MIN_Q};
+
+/// A non-fatal problem with one line of a PEQ file.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PeqWarning {
+    /// 1-based line number, matching editor display.
+    pub line: usize,
+    pub message: String,
+}
+
+impl std::fmt::Display for PeqWarning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "line {}: {}", self.line, self.message)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PeqPreset {
     pub preamp: f32,
     pub bands: Vec<EqBand>,
+    pub warnings: Vec<PeqWarning>,
 }
 
 #[derive(Debug)]
@@ -52,25 +67,58 @@ pub fn parse_peq(path: &Path) -> Result<PeqPreset, PeqError> {
 
 /// Parse a PEQ filter line of the form:
 /// `Filter <N>: ON <TYPE> Fc <FREQ> Hz Gain <GAIN> dB Q <Q>`
-fn parse_filter_line(trimmed: &str) -> Option<EqBand> {
-    let rest = trimmed.split(": ON ").nth(1)?;
+/// Err(reason) = line was recognized as a filter but is malformed.
+fn parse_filter_line(trimmed: &str) -> Result<EqBand, String> {
+    let rest = trimmed
+        .split(": ON ")
+        .nth(1)
+        .ok_or("missing ': ON ' separator")?;
     let parts: Vec<&str> = rest.split_whitespace().collect();
     if parts.len() < 9 {
-        return None;
+        return Err(format!("expected 9 fields, found {}", parts.len()));
     }
 
     let filter_type = match parts[0] {
         "PK" => FilterType::Peak,
         "LSC" => FilterType::LowShelf,
         "HSC" => FilterType::HighShelf,
-        _ => return None,
+        other => return Err(format!("unsupported filter type '{other}'")),
     };
 
-    let frequency = parts[2].parse().unwrap_or(1000.0);
-    let gain = parts[5].parse().unwrap_or(0.0);
-    let q = parts[8].parse().unwrap_or(1.0);
+    // Positional unit checks catch shifted/garbled columns.
+    if parts[1] != "Fc"
+        || parts[3] != "Hz"
+        || parts[4] != "Gain"
+        || parts[6] != "dB"
+        || parts[7] != "Q"
+    {
+        return Err(format!(
+            "unexpected layout (want '<T> Fc <f> Hz Gain <g> dB Q <q>', got '{rest}')"
+        ));
+    }
 
-    Some(EqBand {
+    let frequency: f32 = parts[2]
+        .parse()
+        .map_err(|_| format!("invalid frequency '{}'", parts[2]))?;
+    let gain: f32 = parts[5]
+        .parse()
+        .map_err(|_| format!("invalid gain '{}'", parts[5]))?;
+    let q: f32 = parts[8]
+        .parse()
+        .map_err(|_| format!("invalid Q '{}'", parts[8]))?;
+
+    // NaN parses fine from "NaN" — finite + range checks are mandatory.
+    if !frequency.is_finite() || !(MIN_FREQ_HZ..=MAX_FREQ_HZ).contains(&frequency) {
+        return Err(format!("frequency {frequency} Hz out of range"));
+    }
+    if !gain.is_finite() || gain.abs() > MAX_ABS_GAIN_DB {
+        return Err(format!("gain {gain} dB out of range"));
+    }
+    if !q.is_finite() || !(MIN_Q..=MAX_Q).contains(&q) {
+        return Err(format!("Q {q} out of range"));
+    }
+
+    Ok(EqBand {
         frequency,
         gain,
         q,
@@ -81,6 +129,7 @@ fn parse_filter_line(trimmed: &str) -> Option<EqBand> {
 pub fn parse_peq_str(input: &str) -> Result<PeqPreset, PeqError> {
     let mut preamp: Option<f32> = None;
     let mut bands = Vec::new();
+    let mut warnings = Vec::new();
 
     for (lineno, line) in input.lines().enumerate() {
         let trimmed = line.trim();
@@ -88,7 +137,8 @@ pub fn parse_peq_str(input: &str) -> Result<PeqPreset, PeqError> {
             continue;
         }
 
-        // Parse "Preamp: <val> dB"
+        // Parse "Preamp: <val> dB" — invalid preamp stays a hard error (it
+        // silently shifts EVERYTHING, unlike one bad filter line).
         if let Some(val) = trimmed.strip_prefix("Preamp:") {
             let val = val.trim();
             let raw = val.strip_suffix("dB").map_or(val, |s| s.trim()).to_string();
@@ -101,10 +151,19 @@ pub fn parse_peq_str(input: &str) -> Result<PeqPreset, PeqError> {
         }
 
         // Parse "Filter <N>: ON <TYPE> Fc <FREQ> Hz Gain <GAIN> dB Q <Q>"
-        if trimmed.contains(": ON ")
-            && let Some(band) = parse_filter_line(trimmed)
-        {
-            bands.push(band);
+        if trimmed.contains(": ON ") {
+            match parse_filter_line(trimmed) {
+                Ok(band) => bands.push(band),
+                Err(reason) => warnings.push(PeqWarning {
+                    line: lineno + 1,
+                    message: reason,
+                }),
+            }
+        } else {
+            warnings.push(PeqWarning {
+                line: lineno + 1,
+                message: format!("unrecognized line (skipped): '{trimmed}'"),
+            });
         }
     }
 
@@ -115,6 +174,7 @@ pub fn parse_peq_str(input: &str) -> Result<PeqPreset, PeqError> {
     Ok(PeqPreset {
         preamp: preamp.unwrap_or(0.0),
         bands,
+        warnings,
     })
 }
 
@@ -177,5 +237,50 @@ Filter 3: ON PK Fc 2000 Hz Gain -1.0 dB Q 0.8
 ";
         let preset = parse_peq_str(input).unwrap();
         assert_eq!(preset.bands.len(), 2);
+        // Tolerance preserved, but the skip is now visible:
+        assert_eq!(preset.warnings.len(), 1);
+        assert_eq!(preset.warnings[0].line, 3); // line 3 is the XYZ one
+        assert!(
+            preset.warnings[0]
+                .message
+                .contains("unsupported filter type")
+        );
+    }
+
+    #[test]
+    fn malformed_fields_warn_with_line_numbers() {
+        let input = "\
+Preamp: -6.0 dB
+Filter 1: ON PK Fc 100 Hz Gain 2.0 dB Q 1.0
+Filter 2: ON PK Fc 1O0 Hz Gain 2.0 dB Q 1.0
+Filter 3: ON PK Fc 300 Hz Gain 99.0 dB Q 1.0
+Filter 4: ON XYZ Fc 400 Hz Gain 1.0 dB Q 1.0
+";
+        let preset = parse_peq_str(input).unwrap();
+        assert_eq!(preset.bands.len(), 1); // only line 2 survived
+        assert_eq!(preset.warnings.len(), 3);
+        assert_eq!(preset.warnings[0].line, 3);
+        assert!(preset.warnings[0].message.contains("invalid frequency"));
+        assert!(preset.warnings[1].message.contains("out of range")); // 99 dB
+        assert!(
+            preset.warnings[2]
+                .message
+                .contains("unsupported filter type")
+        );
+    }
+
+    #[test]
+    fn nan_and_missing_units_are_rejected() {
+        // "NaN" parses as f32 — must be caught by is_finite, not parse failure:
+        let input = "Filter 1: ON PK Fc NaN Hz Gain 1.0 dB Q 1.0\n";
+        let err = parse_peq_str(input).unwrap_err(); // zero bands → NoFilters
+        assert!(matches!(err, PeqError::NoFilters));
+
+        // Missing Fc token → warning path; still NoFilters since nothing valid.
+        let shifted = "Filter 1: ON PK 100 Hz Gain 2.0 dB Q 1.0\n";
+        assert!(matches!(
+            parse_peq_str(shifted).unwrap_err(),
+            PeqError::NoFilters
+        ));
     }
 }

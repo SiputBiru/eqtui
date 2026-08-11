@@ -334,6 +334,9 @@ impl App {
 
     pub fn load_peq(&mut self, path: &str) -> AppResult<()> {
         let preset = crate::autoeq::parse_peq(std::path::Path::new(path))?;
+        for w in &preset.warnings {
+            tracing::warn!("{path}: {w}");
+        }
         self.preamp = preset.preamp;
         self.eq.bands = preset.bands;
         self.eq.band_selected = 0;
