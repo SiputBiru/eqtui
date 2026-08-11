@@ -22,12 +22,18 @@ pub struct Profile {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ProfilesFile {
+    /// Index of the profile selected in the TUI at last save.
+    /// `#[serde(default)]` keeps files written by older versions (or other
+    /// tools) loadable — a missing field means "profile 0".
+    #[serde(default)]
+    active_profile: usize,
     profiles: Vec<Profile>,
 }
 
 impl Default for ProfilesFile {
     fn default() -> Self {
         Self {
+            active_profile: 0,
             profiles: (1..=PROFILE_COUNT)
                 .map(|i| Profile {
                     name: format!("Profile {i}"),
@@ -43,7 +49,9 @@ impl Default for ProfilesFile {
 /// Loads profiles from an explicit path. Infallible from the caller's view:
 /// any read/parse problem degrades to defaults, but loudly — the user must
 /// never be silently told their data is gone.
-fn load_from(path: &std::path::Path) -> Vec<Profile> {
+///
+/// Returns `(profiles, active_profile)`.
+fn load_from(path: &std::path::Path) -> (Vec<Profile>, usize) {
     let contents = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -56,7 +64,7 @@ fn load_from(path: &std::path::Path) -> Vec<Profile> {
                     path.display()
                 );
             }
-            return defaults.profiles;
+            return (defaults.profiles, 0);
         }
         Err(e) => {
             // Permission denied etc. Do NOT overwrite — just run in-memory.
@@ -64,7 +72,8 @@ fn load_from(path: &std::path::Path) -> Vec<Profile> {
                 "Cannot read {}: {e} — using in-memory defaults",
                 path.display()
             );
-            return ProfilesFile::default().profiles;
+            let defaults = ProfilesFile::default();
+            return (defaults.profiles, 0);
         }
     };
 
@@ -83,7 +92,8 @@ fn load_from(path: &std::path::Path) -> Vec<Profile> {
 
             update_external_profiles(&mut pf.profiles);
 
-            pf.profiles
+            let active = pf.active_profile;
+            (pf.profiles, active)
         }
         Err(e) => {
             // Preserve the evidence before starting fresh.
@@ -99,12 +109,13 @@ fn load_from(path: &std::path::Path) -> Vec<Profile> {
             if let Err(e) = save_raw(&defaults, path) {
                 tracing::warn!("Cannot write fresh profiles: {e}");
             }
-            defaults.profiles
+            (defaults.profiles, 0)
         }
     }
 }
 
-pub fn load() -> Vec<Profile> {
+/// Loads the profiles and the saved active-profile index.
+pub fn load() -> (Vec<Profile>, usize) {
     load_from(&profiles_path())
 }
 
@@ -144,8 +155,10 @@ pub fn resolve_path(path: &str) -> PathBuf {
     }
 }
 
-pub fn save(profiles: &[Profile]) -> std::io::Result<()> {
+/// Persists the profiles together with the active-profile index.
+pub fn save(profiles: &[Profile], active_profile: usize) -> std::io::Result<()> {
     let pf = ProfilesFile {
+        active_profile,
         profiles: profiles.to_vec(),
     };
     save_raw(&pf, &profiles_path())
@@ -261,7 +274,7 @@ mod tests {
         let path = dir.path().join("profiles.toml");
         std::fs::write(&path, "this is [ not valid toml").unwrap();
 
-        let profiles = load_from(&path);
+        let (profiles, _) = load_from(&path);
 
         // Defaults were produced...
         assert_eq!(profiles.len(), PROFILE_COUNT);
@@ -285,5 +298,47 @@ mod tests {
         std::fs::set_permissions(dir.path(), perms).unwrap();
         let err = save_raw(&ProfilesFile::default(), &dir.path().join("p.toml")).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+    }
+
+    #[test]
+    fn active_profile_roundtrips_through_save_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("profiles.toml");
+        let pf = ProfilesFile {
+            active_profile: 3,
+            profiles: ProfilesFile::default().profiles,
+        };
+        save_raw(&pf, &path).unwrap();
+
+        let (_, active) = load_from(&path);
+        assert_eq!(active, 3);
+    }
+
+    #[test]
+    fn missing_active_profile_defaults_to_zero() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("profiles.toml");
+        // Old-format file without the active_profile field.
+        std::fs::write(&path, "profiles = []\n").unwrap();
+
+        let (_, active) = load_from(&path);
+        assert_eq!(active, 0);
+    }
+
+    #[test]
+    fn load_clamps_active_profile_out_of_range() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("profiles.toml");
+        std::fs::write(
+            &path,
+            "active_profile = 99\nprofiles = [\n  { name = \"a\" },\n  { name = \"b\" },\n]\n",
+        )
+        .unwrap();
+
+        let (profiles, active) = load_from(&path);
+        // normalize pads to PROFILE_COUNT=5 → active 99 still > last index.
+        assert_eq!(profiles.len(), PROFILE_COUNT);
+        let clamped = active.min(profiles.len().saturating_sub(1));
+        assert_eq!(clamped, profiles.len() - 1);
     }
 }

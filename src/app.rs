@@ -98,8 +98,10 @@ pub struct App {
 
 impl App {
     pub fn new(client: DaemonClient) -> Self {
-        let profiles = profiles::load();
-        let active = 0;
+        let (profiles, active) = profiles::load();
+        // Clamp: a hand-edited file (or a profile removed between sessions)
+        // must not panic — fall back to the nearest valid index.
+        let active = active.min(profiles.len().saturating_sub(1));
         let (bands, preamp) = if let Some(p) = profiles.get(active) {
             (p.bands.clone(), p.preamp)
         } else {
@@ -303,7 +305,7 @@ impl App {
             p.bands.clone_from(&self.eq.bands);
             p.preamp = self.preamp;
         }
-        match profiles::save(&self.profiles) {
+        match profiles::save(&self.profiles, self.active_profile) {
             Ok(()) => {
                 self.notify(format!(
                     "Saved {} bands, preamp {:.1} dB",
@@ -355,6 +357,9 @@ impl App {
             self.eq.bands.clone_from(&p.bands);
             self.preamp = p.preamp;
             self.eq.band_selected = 0;
+            // Remember the selection across restarts. Best-effort: the atomic
+            // save makes this cheap and crash-safe.
+            let _ = profiles::save(&self.profiles, self.active_profile);
         }
     }
 
