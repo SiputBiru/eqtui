@@ -56,19 +56,34 @@ impl Pipeline {
 
         let mut max_l = 0.0_f32;
         let mut max_r = 0.0_f32;
+        let mut saw_finite_l = false;
+        let mut saw_finite_r = false;
         for i in 0..n {
             let abs_l = unsafe { (*out_l.add(i)).abs() };
             let abs_r = unsafe { (*out_r.add(i)).abs() };
-            if abs_l > max_l {
-                max_l = abs_l;
+            if abs_l.is_finite() {
+                saw_finite_l = true;
+                if abs_l > max_l {
+                    max_l = abs_l;
+                }
             }
-            if abs_r > max_r {
-                max_r = abs_r;
+            if abs_r.is_finite() {
+                saw_finite_r = true;
+                if abs_r > max_r {
+                    max_r = abs_r;
+                }
             }
         }
 
-        self.peak_l.store(max_l.to_bits(), Ordering::Release);
-        self.peak_r.store(max_r.to_bits(), Ordering::Release);
+        // Only update the meters from buffers that contained finite samples:
+        // a source feeding NaN/∞ must not clobber the last good reading.
+        // Lock-free — scalar comparisons only, no atomics beyond the stores.
+        if saw_finite_l {
+            self.peak_l.store(max_l.to_bits(), Ordering::Release);
+        }
+        if saw_finite_r {
+            self.peak_r.store(max_r.to_bits(), Ordering::Release);
+        }
     }
 
     pub fn peaks(&self) -> (f32, f32) {
@@ -172,5 +187,40 @@ mod tests {
         // input 0.5 * 0.501 ≈ 0.251
         let expected = 0.251_f32;
         assert!((lo[0] - expected).abs() < 0.01);
+    }
+
+    #[test]
+    fn nan_input_does_not_poison_peaks() {
+        let p = Pipeline::new(SAMPLE_RATE);
+        p.set_bypass(true);
+        let mut lo = [0.0_f32; 4];
+        let mut ro = [0.0_f32; 4];
+
+        let good = [0.5_f32; 4];
+        unsafe {
+            p.process(
+                good.as_ptr(),
+                good.as_ptr(),
+                lo.as_mut_ptr(),
+                ro.as_mut_ptr(),
+                4,
+            );
+        }
+        let (pl, _) = p.peaks();
+        assert!((pl - 0.5).abs() < 1e-6);
+
+        let bad = [f32::NAN; 4];
+        unsafe {
+            p.process(
+                bad.as_ptr(),
+                bad.as_ptr(),
+                lo.as_mut_ptr(),
+                ro.as_mut_ptr(),
+                4,
+            );
+        }
+        let (pl, _) = p.peaks();
+        assert!(pl.is_finite()); // meters never show NaN
+        assert!((pl - 0.5).abs() < 1e-6); // last good reading retained
     }
 }

@@ -25,7 +25,9 @@ use uds::UnixStreamExt;
 use crate::paths::{lock_path, socket_path, validate_runtime_dir};
 use crate::pipeline::{Pipeline, SAMPLE_RATE};
 use crate::protocol::{DaemonStatus, PushEvent, Request, Response};
-use crate::state::{EqBand, FilterState, NodeInfo, NullSinkState, PwCommand, PwEvent};
+use crate::state::{
+    EqBand, FilterState, MAX_ABS_PREAMP_DB, MAX_BANDS, NodeInfo, NullSinkState, PwCommand, PwEvent,
+};
 use crate::{AppResult, pw};
 
 pub struct DaemonState {
@@ -427,11 +429,43 @@ fn handle_client(
 
     state.register_client(&stream, client_id);
 
-    let reader = BufReader::new(read_stream);
-    for line in reader.lines() {
-        let Ok(line) = line else { break };
+    // 64 KiB covers ~31 bands with generous headroom; anything larger is hostile.
+    const MAX_REQUEST_LINE: u64 = 64 * 1024;
 
-        let trimmed = line.trim();
+    let mut reader = BufReader::new(read_stream);
+    loop {
+        let mut buf = Vec::new();
+        // `take` caps bytes read from the stream, so a missing newline can't
+        // grow `buf` past the limit.
+        let n = match reader
+            .by_ref()
+            .take(MAX_REQUEST_LINE + 1)
+            .read_until(b'\n', &mut buf)
+        {
+            Ok(n) => n,
+            Err(e) => {
+                debug!(%e, client_id, "Read error; closing connection");
+                break;
+            }
+        };
+        if n == 0 {
+            break; // client closed
+        }
+        if buf.len() as u64 > MAX_REQUEST_LINE || !buf.ends_with(b"\n") {
+            let _ = send_resp(
+                &stream,
+                Response {
+                    ok: false,
+                    error: Some(format!("request line exceeds {MAX_REQUEST_LINE} bytes")),
+                    status: None,
+                },
+            );
+            warn!(client_id, "Oversized request line; disconnecting client");
+            break;
+        }
+
+        let trimmed = String::from_utf8_lossy(&buf);
+        let trimmed = trimmed.trim();
         if trimmed.is_empty() {
             continue;
         }
@@ -479,6 +513,20 @@ fn dispatch_request(
         },
 
         Request::SetBands { bands } => {
+            if bands.len() > MAX_BANDS {
+                return Response {
+                    ok: false,
+                    error: Some(format!("too many bands: {} (max {MAX_BANDS})", bands.len())),
+                    status: None,
+                };
+            }
+            if let Err(reason) = bands.iter().try_for_each(EqBand::validate) {
+                return Response {
+                    ok: false,
+                    error: Some(reason),
+                    status: None,
+                };
+            }
             let count = bands.len();
             (*state.eq_bands.lock().unwrap()).clone_from(&bands);
             let _ = cmd_tx.send(PwCommand::UpdateEq { bands });
@@ -491,6 +539,15 @@ fn dispatch_request(
         }
 
         Request::SetPreamp { gain } => {
+            if !gain.is_finite() || gain.abs() > MAX_ABS_PREAMP_DB {
+                return Response {
+                    ok: false,
+                    error: Some(format!(
+                        "preamp {gain} dB out of range ±{MAX_ABS_PREAMP_DB}"
+                    )),
+                    status: None,
+                };
+            }
             *state.preamp.lock().unwrap() = gain;
             state.pipeline.set_preamp(gain);
             info!(gain, "Preamp updated");
