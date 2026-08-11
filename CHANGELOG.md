@@ -4,6 +4,117 @@ All notable changes to eqtui are documented here.
 
 ---
 
+## [Unreleased]
+
+### Daemon — harden IPC authorization
+
+- **Validate `XDG_RUNTIME_DIR`** before trusting it (exists, is a directory,
+  owned by the effective uid, no group/other access). Refuse to start on an
+  unsafe runtime dir — fail closed.
+- **Private `0700` socket directory** (`$XDG_RUNTIME_DIR/eqtui/`) and an
+  explicit `0600` socket node regardless of umask.
+- **`SO_PEERCRED` check on every accepted connection** (`uds` crate): peers
+  with a foreign uid are rejected and logged.
+- **Only unlink a stale socket** if it really is a socket — never a regular
+  file or symlink planted at the socket path.
+- **Shared path computation** extracted to `src/paths.rs` so daemon and client
+  cannot drift.
+
+### Daemon — request validation
+
+- **Bound request lines at 64 KiB** — an oversized line gets an error response
+  and the connection is closed (no memory-exhaustion from rogue clients).
+- **Validate `SetBands` / `SetPreamp`** before mutating state: band count
+  capped at 31, and frequency/gain/Q/preamp must be finite and in range.
+  Rejections carry a reason and leave state untouched; empty band lists stay
+  legal (clear EQ).
+- **NaN peak guard** — non-finite audio input never reaches the peak meters
+  (the last good reading is retained).
+- Range constants live in `src/state.rs`, shared with the PEQ parser.
+
+### Daemon — lock-file ordering
+
+- **PID is written only after acquiring the flock** — a second instance can no
+  longer truncate the running daemon's PID before discovering it failed to
+  take the lock. A failed second start now reports the running PID.
+
+### Daemon — orderly shutdown lifecycle
+
+- **Track and join every daemon-owned thread** (pw, bridge, peak,
+  null-sink-checker, client handlers) in dependency order; the null-sink
+  checker is cancelled via the shared shutdown flag before it can fork
+  `pw-link` during teardown.
+- **Client handlers are unblocked by closing their streams** on shutdown; the
+  socket is removed and the daemon exits cleanly.
+- **One shared shutdown flag** (`Arc<AtomicBool>`) observed by the pw thread
+  and the daemon.
+- **Auto-launched daemons are kept as `Child` handles**: fail-fast on early
+  exit via `try_wait`, handle-based `kill`+`wait` on timeout (no bare-PID
+  signal, no PID-reuse footgun), and opportunistic reaping in
+  `try_read_event` (no zombie).
+
+### Daemon — single-mutex status snapshots
+
+- **Nine field mutexes → one `Mutex<StatusSnapshot>`**: `get_status()` reads a
+  snapshot that is internally consistent by construction and acquires a single
+  lock. Documented `status → clients` lock order; the real-time audio path
+  keeps its lock-free `Pipeline` atomics (intentional dual-write for preamp /
+  bypass).
+
+### Daemon — confirmed device routing
+
+- **`pw-link` wrappers return real outcomes** (`Ok`/`Benign`/`Failed`) and
+  both channel legs are attempted even if one fails; the link worker reports
+  results back as `LinkResult` events.
+- **Devices are pending until confirmed**: `connected_devices` only ever holds
+  confirmed links; `pending_devices` is exposed in `DaemonStatus` (additive,
+  serde-default) and shown in the TUI as a "connecting…" indicator.
+- **Dead pw thread → error response** with pending state rolled back;
+  vanished devices are pruned from routing state on each node-list cycle.
+
+### Profiles — persistence reliability
+
+- **Atomic saves**: `profiles.toml` is written to a sibling temp file, synced,
+  then renamed — readers never see a truncated file, and serialization
+  failures now propagate instead of writing a tombstone.
+- **Loud recovery on load**: first-run, unreadable, and corrupt files are
+  handled distinctly; corrupt files are backed up to `.bak` before fresh
+  defaults, and every failure path warns.
+- **Restore last active profile**: `profiles.toml` records the active profile
+  index (additive, serde-default); the TUI restores the last selected profile
+  on startup (clamped) and persists it on switch.
+- **Logging**: dropped the world-readable `/tmp` fallback (fails with a clear
+  message) and added single-generation rotation at 5 MiB for the TUI log.
+
+### PEQ parser — line-numbered diagnostics
+
+- **Malformed filter lines no longer silently become defaults**:
+  `parse_filter_line` returns a reason (bad token, shifted layout,
+  non-finite/out-of-range value, unsupported type) and every skipped line is
+  collected as a line-numbered `PeqWarning` on the preset.
+- **Warnings are surfaced**: `eqtui load` prints them to stderr and profile
+  loads log them. Tolerance preserved — one bad filter line never nukes the
+  whole file; only an invalid preamp hard-fails.
+
+### Client — protocol error taxonomy
+
+- **New `ClientError`** (`Disconnected` / `Timeout` / `Malformed` / `Io`):
+  EOF is now classified as `Disconnected` in both `request()` and
+  `try_read_event()` (previously misreported as "Unexpected data" or silently
+  treated as "no event"); malformed frames are named, not dropped.
+- **The TUI reconnect loop can now distinguish** a dead daemon (reconnect with
+  backoff) from a slow one (keep polling) from garbage (resync on the next
+  line).
+
+### Structure — daemon module split
+
+- **`src/daemon.rs` split into focused submodules**: `state` (shared state +
+  event handling), `auth` (peer credentials), `transport` (per-client
+  connection handling), `dispatch` (request dispatch), and `lifecycle`
+  (startup + shutdown). Behavior is unchanged.
+
+---
+
 ## [0.1.2] — 2026-07-10
 
 ### Logging Rework — stderr & systemd-friendly
