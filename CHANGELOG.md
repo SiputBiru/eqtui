@@ -4,7 +4,7 @@ All notable changes to eqtui are documented here.
 
 ---
 
-## [0.1.4] - 2026-08-12
+## [0.1.4] - 2026-08-12 - Unreleased
 
 ### Fix - restored profile not applied at startup
 
