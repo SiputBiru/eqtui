@@ -9,7 +9,6 @@ readme = "README.md"
 keywords = ["pipewire", "equalizer", "tui", "audio", "dsp"]
 categories = ["multimedia::audio", "command-line-utilities"]
 exclude = [
-  "imgs/",
   ".cache",
   "examples/",
   ".tmp/",
