@@ -72,6 +72,8 @@ pub struct App {
     /// False when `pw-link -I` failed and the source state is unknown.
     pub null_sink_source_known: bool,
     pub connected_devices: Vec<u32>,
+    /// Device ops in flight (connect/disconnect awaiting confirmation).
+    pub pending_devices: Vec<u32>,
 
     pub eq: EqState,
     pub preamp: f32,
@@ -98,8 +100,10 @@ pub struct App {
 
 impl App {
     pub fn new(client: DaemonClient) -> Self {
-        let profiles = profiles::load();
-        let active = 0;
+        let (profiles, active) = profiles::load();
+        // Clamp: a hand-edited file (or a profile removed between sessions)
+        // must not panic — fall back to the nearest valid index.
+        let active = active.min(profiles.len().saturating_sub(1));
         let (bands, preamp) = if let Some(p) = profiles.get(active) {
             (p.bands.clone(), p.preamp)
         } else {
@@ -132,6 +136,7 @@ impl App {
             null_sink_missing: false,
             null_sink_source_known: true,
             connected_devices: Vec::new(),
+            pending_devices: Vec::new(),
             filter_node_id: None,
             filter_state: FilterState::Unconnected,
             notification: None,
@@ -171,7 +176,7 @@ impl App {
         Ok(())
     }
 
-    pub fn drain_events(&mut self) -> AppResult<()> {
+    pub fn drain_events(&mut self) -> Result<(), crate::client::ClientError> {
         loop {
             let event = {
                 let Some(client) = &mut self.client else {
@@ -238,6 +243,7 @@ impl App {
         self.null_sink = status.null_sink;
         self.filter_node_id = status.filter_node_id;
         self.connected_devices = status.connected_devices;
+        self.pending_devices = status.pending_devices;
         self.eq.bypass = status.bypass;
         self.eq.bands = status.bands;
         self.preamp = status.preamp;
@@ -303,7 +309,7 @@ impl App {
             p.bands.clone_from(&self.eq.bands);
             p.preamp = self.preamp;
         }
-        match profiles::save(&self.profiles) {
+        match profiles::save(&self.profiles, self.active_profile) {
             Ok(()) => {
                 self.notify(format!(
                     "Saved {} bands, preamp {:.1} dB",
@@ -328,6 +334,9 @@ impl App {
 
     pub fn load_peq(&mut self, path: &str) -> AppResult<()> {
         let preset = crate::autoeq::parse_peq(std::path::Path::new(path))?;
+        for w in &preset.warnings {
+            tracing::warn!("{path}: {w}");
+        }
         self.preamp = preset.preamp;
         self.eq.bands = preset.bands;
         self.eq.band_selected = 0;
@@ -355,6 +364,9 @@ impl App {
             self.eq.bands.clone_from(&p.bands);
             self.preamp = p.preamp;
             self.eq.band_selected = 0;
+            // Remember the selection across restarts. Best-effort: the atomic
+            // save makes this cheap and crash-safe.
+            let _ = profiles::save(&self.profiles, self.active_profile);
         }
     }
 
@@ -367,17 +379,17 @@ impl App {
             self.notify("Filter not ready — wait for PipeWire connection");
             return Ok(());
         }
-        if self.is_device_connected(id) {
+        let already = self.is_device_connected(id) || self.pending_devices.contains(&id);
+        if already {
             if let Some(client) = &mut self.client {
                 client.disconnect_device(id)?;
             }
-            self.connected_devices.retain(|d| *d != id);
-        } else {
-            if let Some(client) = &mut self.client {
-                client.connect_device(id)?;
-            }
-            self.connected_devices.push(id);
+        } else if let Some(client) = &mut self.client {
+            client.connect_device(id)?;
         }
+        // Optimistic for the indicator; confirmation arrives via
+        // full_sync/GetStatus (the daemon is the authority).
+        self.pending_devices.push(id);
         Ok(())
     }
 }
@@ -413,6 +425,7 @@ impl App {
             null_sink_missing: false,
             null_sink_source_known: true,
             connected_devices: Vec::new(),
+            pending_devices: Vec::new(),
             filter_node_id: None,
             filter_state: FilterState::Unconnected,
             notification: None,

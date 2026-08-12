@@ -15,7 +15,7 @@ use ratatui::layout::{Constraint, Layout};
 
 use crate::AppResult;
 use crate::app::{App, DaemonConnection};
-use crate::client::DaemonClient;
+use crate::client::{ClientError, DaemonClient};
 use crate::event;
 use crate::event::EventHandler;
 use crate::handler;
@@ -121,45 +121,56 @@ pub fn attach() -> AppResult<()> {
 
     while app.running {
         if let Err(e) = app.drain_events() {
-            tracing::warn!(%e, "Daemon connection lost - reconnecting with backoff");
+            match e {
+                ClientError::Disconnected | ClientError::Io(_) => {
+                    tracing::warn!("Daemon connection lost - reconnecting with backoff");
+                    app.notify("Daemon disconnected - reconnecting...");
+                    app.daemon = DaemonConnection::Reconnecting;
 
-            app.notify("Daemon disconnected - reconnecting...");
-            app.daemon = DaemonConnection::Reconnecting;
+                    tui.draw(|frame| render(&app, frame))?;
 
-            tui.draw(|frame| render(&app, frame))?;
+                    let mut delay = Duration::from_secs(1);
+                    let max_delay = Duration::from_secs(8);
+                    let max_total = Duration::from_secs(30);
+                    let start = time::Instant::now();
 
-            let mut delay = Duration::from_secs(1);
-            let max_delay = Duration::from_secs(8);
-            let max_total = Duration::from_secs(30);
-            let start = time::Instant::now();
-
-            let reconnected = loop {
-                match app.reconnect() {
-                    Ok(()) => break true,
-                    Err(e) => {
-                        if start.elapsed() >= max_total {
-                            tracing::error!(%e, "Reconnect failed after 30s");
-                            app.notify(format!("Reconnect failed: {e}"));
-                            break false;
+                    let reconnected = loop {
+                        match app.reconnect() {
+                            Ok(()) => break true,
+                            Err(e) => {
+                                if start.elapsed() >= max_total {
+                                    tracing::error!(%e, "Reconnect failed after 30s");
+                                    app.notify(format!("Reconnect failed: {e}"));
+                                    break false;
+                                }
+                                tracing::warn!(%e, "Reconnect failed — retrying in {delay:?}");
+                                app.notify(format!("Reconnecting in {}s...", delay.as_secs()));
+                                tui.draw(|frame| render(&app, frame))?;
+                                std::thread::sleep(delay);
+                                delay = (delay * 2).min(max_delay);
+                            }
                         }
-                        tracing::warn!(%e, "Reconnect failed — retrying in {delay:?}");
-                        app.notify(format!("Reconnecting in {}s...", delay.as_secs()));
+                    };
+
+                    if reconnected {
+                        app.daemon = DaemonConnection::Connected;
+                        tracing::info!("Reconnected to daemon");
+                        app.notify("Reconnected - bands and preamp restored");
+                    } else {
+                        app.daemon = DaemonConnection::Disconnected;
+                        app.notify("Connection lost - exiting");
                         tui.draw(|frame| render(&app, frame))?;
-                        std::thread::sleep(delay);
-                        delay = (delay * 2).min(max_delay);
+                        break;
                     }
                 }
-            };
-
-            if reconnected {
-                app.daemon = DaemonConnection::Connected;
-                tracing::info!("Reconnected to daemon");
-                app.notify("Reconnected - bands and preamp restored");
-            } else {
-                app.daemon = DaemonConnection::Disconnected;
-                app.notify("Connection lost - exiting");
-                tui.draw(|frame| render(&app, frame))?;
-                break;
+                ClientError::Timeout => {
+                    // daemon alive but slow — not a death; log and keep polling
+                    tracing::warn!("daemon read timed out");
+                }
+                ClientError::Malformed(_) => {
+                    // already warn-logged inside the client; newline framing
+                    // resyncs on the next line — no reconnect needed
+                }
             }
         }
 

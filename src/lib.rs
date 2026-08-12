@@ -10,6 +10,7 @@ pub mod effects;
 pub mod event;
 pub mod handler;
 pub mod logging;
+pub mod paths;
 pub mod pipeline;
 pub mod profiles;
 pub mod protocol;

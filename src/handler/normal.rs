@@ -386,8 +386,9 @@ mod tests {
             KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
             &mut app,
         );
-        assert!(app.is_device_connected(123));
-        assert_eq!(app.connected_devices, vec![123]);
+        // The TUI marks the op pending; confirmation arrives via GetStatus.
+        assert!(!app.is_device_connected(123));
+        assert!(app.pending_devices.contains(&123));
 
         handle_devices(
             KeyEvent::new(KeyCode::Char('C'), KeyModifiers::NONE),

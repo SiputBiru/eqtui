@@ -78,10 +78,10 @@ impl EventThread {
                             break;
                         }
                     }
-                    CrosstermEvent::Resize(w, h) => {
-                        if self.sender.send(Event::Resize(w, h)).is_err() {
-                            break;
-                        }
+                    CrosstermEvent::Resize(w, h)
+                        if self.sender.send(Event::Resize(w, h)).is_err() =>
+                    {
+                        break;
                     }
                     _ => {}
                 }

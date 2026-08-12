@@ -54,10 +54,14 @@ impl fmt::Display for NodeInfo {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub enum NullSinkState {
+    #[default]
     NotLoaded,
-    Loaded { module_id: u32, has_source: bool },
+    Loaded {
+        module_id: u32,
+        has_source: bool,
+    },
 }
 
 impl NullSinkState {
@@ -86,8 +90,9 @@ impl NullSinkState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub enum FilterState {
+    #[default]
     Unconnected,
     Connecting,
     Paused,
@@ -130,6 +135,12 @@ pub enum PwEvent {
     /// could not be determined (e.g. binary missing, `PipeWire` down).
     NullSinkInputUnknown,
     NullSinkError(String),
+    /// Result of an async link operation from the pw-link worker.
+    LinkResult {
+        device_id: u32,
+        connect: bool,
+        ok: bool,
+    },
     Error(String),
 }
 
@@ -148,9 +159,137 @@ pub struct EqBand {
     pub filter_type: FilterType,
 }
 
+/// Maximum number of EQ bands per request / preset.
+pub const MAX_BANDS: usize = 31;
+/// Biquad stability window at 48 kHz (Nyquist = 24 kHz).
+pub const MIN_FREQ_HZ: f32 = 10.0;
+pub const MAX_FREQ_HZ: f32 = 24_000.0;
+/// Per-band gain. `AutoEQ` output rarely exceeds ±20 dB; 40 is generous headroom.
+pub const MAX_ABS_GAIN_DB: f32 = 40.0;
+/// Q outside this window is a typo, not a filter.
+pub const MIN_Q: f32 = 0.1;
+pub const MAX_Q: f32 = 10.0;
+/// Preamp headroom. Beyond ±40 dB something is wrong with the input.
+pub const MAX_ABS_PREAMP_DB: f32 = 40.0;
+
+impl EqBand {
+    /// Validate against DSP-safe ranges. Returns a human-readable reason.
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.frequency.is_finite() || !(MIN_FREQ_HZ..=MAX_FREQ_HZ).contains(&self.frequency) {
+            return Err(format!(
+                "frequency {} Hz out of range {MIN_FREQ_HZ}..={MAX_FREQ_HZ}",
+                self.frequency
+            ));
+        }
+        if !self.gain.is_finite() || self.gain.abs() > MAX_ABS_GAIN_DB {
+            return Err(format!(
+                "gain {} dB out of range ±{MAX_ABS_GAIN_DB}",
+                self.gain
+            ));
+        }
+        if !self.q.is_finite() || !(MIN_Q..=MAX_Q).contains(&self.q) {
+            return Err(format!("Q {} out of range {MIN_Q}..={MAX_Q}", self.q));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum FilterType {
     Peak,
     LowShelf,
     HighShelf,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_rejects_non_finite_and_out_of_range() {
+        let ok = EqBand {
+            frequency: 1000.0,
+            gain: 3.0,
+            q: 1.0,
+            filter_type: FilterType::Peak,
+        };
+        assert!(ok.validate().is_ok());
+
+        for bad in [f32::NAN, f32::INFINITY, 5.0, 30_000.0] {
+            assert!(
+                EqBand {
+                    frequency: bad,
+                    ..ok.clone()
+                }
+                .validate()
+                .is_err()
+            );
+        }
+        assert!(
+            EqBand {
+                gain: f32::NAN,
+                ..ok.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            EqBand {
+                gain: 41.0,
+                ..ok.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            EqBand {
+                q: 0.05,
+                ..ok.clone()
+            }
+            .validate()
+            .is_err()
+        );
+
+        // Boundaries are inclusive:
+        assert!(
+            EqBand {
+                frequency: MIN_FREQ_HZ,
+                ..ok.clone()
+            }
+            .validate()
+            .is_ok()
+        );
+        assert!(
+            EqBand {
+                frequency: MAX_FREQ_HZ,
+                ..ok.clone()
+            }
+            .validate()
+            .is_ok()
+        );
+        assert!(
+            EqBand {
+                gain: MAX_ABS_GAIN_DB,
+                ..ok.clone()
+            }
+            .validate()
+            .is_ok()
+        );
+        assert!(
+            EqBand {
+                q: MIN_Q,
+                ..ok.clone()
+            }
+            .validate()
+            .is_ok()
+        );
+        assert!(
+            EqBand {
+                q: MAX_Q,
+                ..ok.clone()
+            }
+            .validate()
+            .is_ok()
+        );
+    }
 }

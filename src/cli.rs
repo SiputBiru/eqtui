@@ -54,6 +54,9 @@ pub fn run_load(args: &[String]) -> AppResult<()> {
     })?;
 
     let preset = parse_peq(std::path::Path::new(path))?;
+    for w in &preset.warnings {
+        eprintln!("warning: {w}");
+    }
     let mut client = DaemonClient::connect()?;
     client.set_preamp(preset.preamp)?;
     client.set_bands(&preset.bands)?;
