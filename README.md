@@ -7,7 +7,7 @@
 A keyboard-driven parametric EQ for PipeWire that lives in the terminal.
 Built with [Ratatui](https://ratatui.rs).
 
-<img src="./imgs/theviewofthetui2.png" width="640" alt="idontknowwhattocallforthis">
+<img width="640" alt="theviewofthetui2" src="https://github.com/user-attachments/assets/ff020056-3811-4f49-9351-c8729a3e0d53" />
 
 [EasyEffects](https://github.com/wwmm/easyeffects) is great, but sometimes I just
 want a simple EQ not a full DSP pipeline with a GTK or Qt UI.<br>
