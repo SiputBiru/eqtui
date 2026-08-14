@@ -4,41 +4,56 @@ All notable changes to eqtui are documented here.
 
 ---
 
-## [0.1.3] — 2026-08-11
+## [0.1.4] - 2026-08-12 - Unreleased
 
-### Daemon — harden IPC authorization
+### Fix - restored profile not applied at startup
+
+- **The saved EQ now actually loads.** On startup the daemon starts with empty
+  state, and the initial sync overwrote the just-restored profile's bands and
+  preamp - the EQ table stayed empty until a manual profile switch, and the
+  DSP never received the saved bands (audio was also un-EQ'd). The restored
+  active profile is now pushed to the daemon on attach, right after the
+  initial sync, so the EQ shows **and** sounds correct immediately.
+- Refactored the profile-apply logic into a shared helper used by both attach
+  and reconnect, so the two paths can't drift.
+
+---
+
+## [0.1.3] - 2026-08-11
+
+### Daemon - harden IPC authorization
 
 - **Validate `XDG_RUNTIME_DIR`** before trusting it (exists, is a directory,
   owned by the effective uid, no group/other access). Refuse to start on an
-  unsafe runtime dir — fail closed.
+  unsafe runtime dir - fail closed.
 - **Private `0700` socket directory** (`$XDG_RUNTIME_DIR/eqtui/`) and an
   explicit `0600` socket node regardless of umask.
 - **`SO_PEERCRED` check on every accepted connection** (`uds` crate): peers
   with a foreign uid are rejected and logged.
-- **Only unlink a stale socket** if it really is a socket — never a regular
+- **Only unlink a stale socket** if it really is a socket - never a regular
   file or symlink planted at the socket path.
 - **Shared path computation** extracted to `src/paths.rs` so daemon and client
   cannot drift.
 
-### Daemon — request validation
+### Daemon - request validation
 
-- **Bound request lines at 64 KiB** — an oversized line gets an error response
+- **Bound request lines at 64 KiB** - an oversized line gets an error response
   and the connection is closed (no memory-exhaustion from rogue clients).
 - **Validate `SetBands` / `SetPreamp`** before mutating state: band count
   capped at 31, and frequency/gain/Q/preamp must be finite and in range.
   Rejections carry a reason and leave state untouched; empty band lists stay
   legal (clear EQ).
-- **NaN peak guard** — non-finite audio input never reaches the peak meters
+- **NaN peak guard** - non-finite audio input never reaches the peak meters
   (the last good reading is retained).
 - Range constants live in `src/state.rs`, shared with the PEQ parser.
 
-### Daemon — lock-file ordering
+### Daemon - lock-file ordering
 
-- **PID is written only after acquiring the flock** — a second instance can no
+- **PID is written only after acquiring the flock** - a second instance can no
   longer truncate the running daemon's PID before discovering it failed to
   take the lock. A failed second start now reports the running PID.
 
-### Daemon — orderly shutdown lifecycle
+### Daemon - orderly shutdown lifecycle
 
 - **Track and join every daemon-owned thread** (pw, bridge, peak,
   null-sink-checker, client handlers) in dependency order; the null-sink
@@ -53,7 +68,7 @@ All notable changes to eqtui are documented here.
   signal, no PID-reuse footgun), and opportunistic reaping in
   `try_read_event` (no zombie).
 
-### Daemon — single-mutex status snapshots
+### Daemon - single-mutex status snapshots
 
 - **Nine field mutexes → one `Mutex<StatusSnapshot>`**: `get_status()` reads a
   snapshot that is internally consistent by construction and acquires a single
@@ -61,7 +76,7 @@ All notable changes to eqtui are documented here.
   keeps its lock-free `Pipeline` atomics (intentional dual-write for preamp /
   bypass).
 
-### Daemon — confirmed device routing
+### Daemon - confirmed device routing
 
 - **`pw-link` wrappers return real outcomes** (`Ok`/`Benign`/`Failed`) and
   both channel legs are attempted even if one fails; the link worker reports
@@ -72,10 +87,10 @@ All notable changes to eqtui are documented here.
 - **Dead pw thread → error response** with pending state rolled back;
   vanished devices are pruned from routing state on each node-list cycle.
 
-### Profiles — persistence reliability
+### Profiles - persistence reliability
 
 - **Atomic saves**: `profiles.toml` is written to a sibling temp file, synced,
-  then renamed — readers never see a truncated file, and serialization
+  then renamed - readers never see a truncated file, and serialization
   failures now propagate instead of writing a tombstone.
 - **Loud recovery on load**: first-run, unreadable, and corrupt files are
   handled distinctly; corrupt files are backed up to `.bak` before fresh
@@ -86,17 +101,17 @@ All notable changes to eqtui are documented here.
 - **Logging**: dropped the world-readable `/tmp` fallback (fails with a clear
   message) and added single-generation rotation at 5 MiB for the TUI log.
 
-### PEQ parser — line-numbered diagnostics
+### PEQ parser - line-numbered diagnostics
 
 - **Malformed filter lines no longer silently become defaults**:
   `parse_filter_line` returns a reason (bad token, shifted layout,
   non-finite/out-of-range value, unsupported type) and every skipped line is
   collected as a line-numbered `PeqWarning` on the preset.
 - **Warnings are surfaced**: `eqtui load` prints them to stderr and profile
-  loads log them. Tolerance preserved — one bad filter line never nukes the
+  loads log them. Tolerance preserved - one bad filter line never nukes the
   whole file; only an invalid preamp hard-fails.
 
-### Client — protocol error taxonomy
+### Client - protocol error taxonomy
 
 - **New `ClientError`** (`Disconnected` / `Timeout` / `Malformed` / `Io`):
   EOF is now classified as `Disconnected` in both `request()` and
@@ -106,7 +121,7 @@ All notable changes to eqtui are documented here.
   backoff) from a slow one (keep polling) from garbage (resync on the next
   line).
 
-### Structure — daemon module split
+### Structure - daemon module split
 
 - **`src/daemon.rs` split into focused submodules**: `state` (shared state +
   event handling), `auth` (peer credentials), `transport` (per-client
@@ -115,32 +130,32 @@ All notable changes to eqtui are documented here.
 
 ---
 
-## [0.1.2] — 2026-07-10
+## [0.1.2] - 2026-07-10
 
-### Logging Rework — stderr & systemd-friendly
+### Logging Rework - stderr & systemd-friendly
 
 - **Dropped the log file** (`~/.local/share/eqtui/eqtui.log`).  Logs are now
   routed by mode:
   - **Daemon / CLI** → stderr (terminal or `journalctl` under systemd).
   - **TUI** → `~/.local/share/eqtui/eqtui-tui.log` (alternate screen must
     not be polluted by stray stderr output).
-- **`RUST_LOG` support** — control verbosity at runtime.  Defaults to
+- **`RUST_LOG` support** - control verbosity at runtime.  Defaults to
   `eqtui=info`.  Example: `RUST_LOG=eqtui=debug eqtui daemon`.
-- **Centralised logging init** in `src/logging.rs` — removes ~20 lines of
+- **Centralised logging init** in `src/logging.rs` - removes ~20 lines of
   boilerplate from `main.rs`.
-- **Removed dead code** in `daemon::run_daemon()` — was reopening the log
+- **Removed dead code** in `daemon::run_daemon()` - was reopening the log
   file that `main()` already set up; did nothing useful.
-- **Updated README** — logging behaviour, `RUST_LOG` usage, and a guide
+- **Updated README** - logging behaviour, `RUST_LOG` usage, and a guide
   for running as a systemd user service.
 
 ---
 
-## [0.1.1-alpha.7] — 2026-05-29
+## [0.1.1-alpha.7] - 2026-05-29
 
-### Debloat — `daemon.rs`
+### Debloat - `daemon.rs`
 
 - **Removed double-fork daemonization** (`init()`). The daemon no longer
-  performs POSIX double-fork — it runs as a normal foreground process
+  performs POSIX double-fork - it runs as a normal foreground process
   spawned by the TUI or systemd.
 - **Removed state persistence** (`save_state`/`restore_state`). The daemon
   no longer auto-saves EQ bands, preamp, or bypass to `state.toml` on
@@ -151,13 +166,13 @@ All notable changes to eqtui are documented here.
 - **Removed peer credentials check** (`uds` dependency). `$XDG_RUNTIME_DIR`
   already enforces user isolation.
 - **Removed `MAX_CLIENTS` limit** and `MAX_BANDS` validation.
-- **Removed `catch_unwind` wrapper** — panics propagate naturally.
-- **Removed `Response` helpers** and `send_resp()` — inlined.
+- **Removed `catch_unwind` wrapper** - panics propagate naturally.
+- **Removed `Response` helpers** and `send_resp()` - inlined.
 - **Merged `run()` + `init()` + `run_daemon()`** into a single
   `run_daemon()` entry point.
 - **File shrunk from 786 lines to 532 lines** (−32%).
 
-### Debloat — `config.rs` (removed)
+### Debloat - `config.rs` (removed)
 
 - **Deleted `config.rs`** (153 lines). The config system was dead code:
   `Config` was deserialized from `~/.config/eqtui/config.toml` but
@@ -171,31 +186,31 @@ All notable changes to eqtui are documented here.
   section.
 - **Saves 153 lines + `toml` serde overhead.**
 
-### Debloat — dependencies (`regex` removed)
+### Debloat - dependencies (`regex` removed)
 
 - **Replaced `regex` crate with manual string parsing** in `autoeq/parser.rs`.
   The two regex patterns (`^Preamp:\s+...` and `Filter\s+\d+:\s+ON\s+...`)
   were replaced with `strip_prefix`, `strip_suffix`, `split`, and
-  `split_whitespace` — roughly the same LOC, zero external dependencies.
-- **Removed `regex = "1.12.3"` from `Cargo.toml`** — drops the transitive
+  `split_whitespace` - roughly the same LOC, zero external dependencies.
+- **Removed `regex = "1.12.3"` from `Cargo.toml`** - drops the transitive
   dependency tree (`regex-automata`, `regex-syntax`, `aho-corasick`,
   `memchr`), speeding up compile times and shrinking the binary.
 
 ---
 
-## [0.1.1-alpha.6] — 2026-05-25
+## [0.1.1-alpha.6] - 2026-05-25
 
 ### Audio Engine
 
 - **Zero-lock RT path:** Removed `std::sync::RwLock` from the real-time audio
-  thread — EQ processing now runs lock-free on the PipeWire mainloop,
+  thread - EQ processing now runs lock-free on the PipeWire mainloop,
   eliminating xruns during EQ changes.
 - **Merged peak detection:** Single-pass peak scan replacing two separate
   loops (~30–40% less overhead per buffer).
 - **Folded preamp:** Preamp applied in the same loop as EQ output instead
   of a separate O(n) pass.
 - **ARM atomics fix:** Replaced `Relaxed` ordering with `Release`/`Acquire`
-  on peak meter atomics — peak meters now work correctly on ARM (Apple
+  on peak meter atomics - peak meters now work correctly on ARM (Apple
   Silicon, Raspberry Pi, AWS Graviton).
 - **`pw-link -I` off mainloop:** Moved the null-sink input source check to a
   dedicated thread, preventing `fork`/`exec`/`waitpid` from blocking the
@@ -210,7 +225,7 @@ All notable changes to eqtui are documented here.
   8s capped, 30s total) when the daemon disconnects. The TUI stays alive,
   shows a `Reconnecting...` status, and resumes automatically.
 - **Daemon connection indicator:** New `Daemon:` line in the monitoring
-  panel — green `Connected`, yellow `Reconnecting...`, red `Disconnected`.
+  panel - green `Connected`, yellow `Reconnecting...`, red `Disconnected`.
 - **Orphan cleanup:** Auto-launched daemon processes are sent `SIGTERM` if
   they fail to start within the timeout.
 - **Log truncation:** Daemon log now starts fresh each session
@@ -229,7 +244,7 @@ All notable changes to eqtui are documented here.
 - **Filter-not-ready notification:** Pressing `C` before the PipeWire
   filter is ready now shows a notification instead of silence.
 - **Source detection:** `pw-link -I` failures are now distinguished from
-  genuine "no source" — the panel shows `Source: ?` when the state can't
+  genuine "no source" - the panel shows `Source: ?` when the state can't
   be determined.
 
 ### CLI
@@ -239,7 +254,7 @@ All notable changes to eqtui are documented here.
 
 ### Bug Fixes
 
-- Profile `:w` no longer silently swallows write errors — shows
+- Profile `:w` no longer silently swallows write errors - shows
   `Failed to save: ...` notification on disk-full or permission errors.
 - TUI device state now updated *after* daemon confirmation, preventing
   phantom connected/disconnected states.
@@ -266,6 +281,6 @@ All notable changes to eqtui are documented here.
 
 ## [0.1.1-alpha.5] and earlier
 
-Initial development releases — daemon/TUI architecture, parametric EQ
+Initial development releases - daemon/TUI architecture, parametric EQ
 engine, Vim-inspired keybindings, AutoEQ PEQ import, profile system,
 and PipeWire integration.

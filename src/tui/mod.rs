@@ -109,6 +109,11 @@ pub fn attach() -> AppResult<()> {
     if let Err(e) = app.full_sync() {
         tracing::warn!(%e, "Initial full_sync failed - starting with defaults");
     }
+    // full_sync reads the daemon's (empty-on-fresh-start) state; re-apply the
+    // restored active profile so the EQ shows AND sounds right immediately.
+    if let Err(e) = app.apply_active_profile() {
+        tracing::warn!(%e, "Failed to apply active profile at attach");
+    }
 
     let backend = ratatui::backend::CrosstermBackend::new(io::stdout());
 
