@@ -20,7 +20,13 @@ All notable changes to eqtui are documented here.
   `futures-core`.
 - **Trim tui-input to the crossterm backend** (`default-features = false`) — the
   ratatui input widget is not used.
-- Release binary: **2.04 MiB → 1.79 MiB** (about −12%).
+- **Drop `tracing-subscriber`'s `ansi` feature** (`nu-ansi-term`) — daemon/CLI
+  stderr logs are now monochrome; the TUI log file was already `with_ansi(false)`.
+- **Enable `panic = "abort"` in the release profile** — removes the unwind
+  tables; any panic now terminates the whole process (previously only the
+  panicking thread died, the rest of the daemon kept running). The TUI's
+  terminal-reset panic hook still runs before abort.
+- Release binary: **2.04 MiB → ~1.5–1.55 MiB** (about −25%).
 
 ---
 
