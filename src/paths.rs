@@ -194,7 +194,7 @@ mod tests {
         // Arrange
         let dir = temp_dir("foreign-0700", 0o700);
 
-        // Act — expect any non-zero uid to fail against euid 0's directory.
+        // Act: expect any non-zero uid to fail against euid 0's directory.
         let result = validate_dir(&dir, 1);
 
         // Assert

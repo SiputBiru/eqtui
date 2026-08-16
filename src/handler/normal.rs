@@ -31,7 +31,7 @@ fn handle_devices(key: KeyEvent, app: &mut App) {
         }
         KeyCode::Char('c' | 'C') if !app.nodes.is_empty() => {
             let target_id = app.nodes[app.nodes_selected].id;
-            // Reject connecting the null sink (or filter) to itself —
+            // Reject connecting the null sink (or filter) to itself:
             // would create an audio feedback loop.
             if app.null_sink.module_id() == Some(target_id) || app.filter_node_id == Some(target_id)
             {
@@ -428,7 +428,7 @@ mod tests {
     fn test_handle_devices_connect_no_filter_ready() {
         let mut app = App::new_test();
         app.focused_block = FocusedBlock::Devices;
-        // filter_node_id is None — not ready yet
+        // filter_node_id is None: not ready yet
         app.nodes.push(crate::state::NodeInfo {
             id: 123,
             name: "Test Device".to_string(),

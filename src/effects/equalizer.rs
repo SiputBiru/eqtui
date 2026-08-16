@@ -144,18 +144,18 @@ impl AudioEq {
 ///
 /// # Intermediate Variables
 ///
-///   gain_linear = 10^(gain_dB / 40)    —  peak/shelf gain, linear scale
-///   alpha       = sin(w0) / (2 · Q)    —  bandwidth parameter
+///   gain_linear = 10^(gain_dB / 40)   :  peak/shelf gain, linear scale
+///   alpha       = sin(w0) / (2 · Q)   :  bandwidth parameter
 ///
 /// # Filter Types
 ///
-/// **Peak (PK)** — boosts or cuts a band around w0.  At DC and Nyquist the
+/// **Peak (PK)**: boosts or cuts a band around w0.  At DC and Nyquist the
 /// response is unity (0 dB).  `a1` intentionally equals `b1`.
 ///
-/// **LowShelf (LS)** — applies constant gain below w0, transitioning to unity
+/// **LowShelf (LS)**: applies constant gain below w0, transitioning to unity
 /// above.  The transition slope is set by Q.
 ///
-/// **HighShelf (HS)** — applies constant gain above w0, transitioning to unity
+/// **HighShelf (HS)**: applies constant gain above w0, transitioning to unity
 /// below.  The transition slope is set by Q.
 ///
 /// The resulting coefficients (b0, b1, b2, a1, a2) are normalised by a0 so
@@ -240,7 +240,7 @@ pub(crate) fn biquad_coefficients(band: &EqBand, sample_rate: f32) -> BiquadCoef
 ///   H(z) = (b0 + b1·z⁻¹ + b2·z⁻²) / (1 + a1·z⁻¹ + a2·z⁻²)
 ///
 /// Evaluating the frequency response means setting z = e^{jω} where
-/// ω = 2π·f / fs, producing H(e^{jω}) — a complex number whose magnitude
+/// ω = 2π·f / fs, producing H(e^{jω}): a complex number whose magnitude
 /// |H| is the gain at frequency f.
 ///
 /// # Current Implementation: Direct Rectangular Form
@@ -282,7 +282,7 @@ pub(crate) fn biquad_coefficients(band: &EqBand, sample_rate: f32) -> BiquadCoef
 ///   Numerator   ≈  1.09 + 3.59 + 0.75 − 7.25 + 1.81 = 0.0007   (true: 0.00025)
 ///   Denominator ≈  1.00 + 3.59 + 0.83 − 7.25 + 1.82 = 0.0003   (true: 0.00026)
 ///
-/// Five large terms cancel to produce a tiny difference — f32 precision
+/// Five large terms cancel to produce a tiny difference: f32 precision
 /// cannot preserve the ratio.  The direct rectangular form avoids this by
 /// keeping the computation in separate real/imaginary components, never
 /// forcing a large cancellation.

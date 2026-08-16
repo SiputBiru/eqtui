@@ -104,7 +104,7 @@ Close with `q` the EQ keeps running. Re-attach anytime with `eqtui attach`.
 | `:add [freq]` | Add a band at optional frequency (default 1000Hz) |
 | `Esc` | Clear command and return to Normal Mode |
 
-## Features 
+## Features
 
 - **Daemon/TUI split**: EQ engine stays alive when the UI closes
 - **Parametric EQ**: frequency, gain, Q, filter type per band
@@ -222,7 +222,7 @@ systemctl --user daemon-reload
 systemctl --user enable --now eqtui
 ```
 
-Once the service is running, `eqtui` (TUI) will connect to it automatically — no
+Once the service is running, `eqtui` (TUI) will connect to it automatically: no
 manual daemon launch needed. View logs with:
 
 ```bash
@@ -253,4 +253,4 @@ Needs PipeWire and a Nerd Font.
 
 ---
 
-[Project by SiputBiru](LICENSE) — patches welcome but no promises :^)
+[Project by SiputBiru](LICENSE): patches welcome but no promises :^)

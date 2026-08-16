@@ -57,7 +57,7 @@ pub enum PushEvent {
     /// state could not be determined.
     SourceUnknown,
     /// Sent once when the null-audio-sink could not be created.
-    /// The filter runs but processes silence — no audio source is wired.
+    /// The filter runs but processes silence: no audio source is wired.
     NullSinkMissing,
     Error {
         message: String,

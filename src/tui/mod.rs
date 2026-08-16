@@ -148,7 +148,7 @@ pub fn attach() -> AppResult<()> {
                                     app.notify(format!("Reconnect failed: {e}"));
                                     break false;
                                 }
-                                tracing::warn!(%e, "Reconnect failed — retrying in {delay:?}");
+                                tracing::warn!(%e, "Reconnect failed: retrying in {delay:?}");
                                 app.notify(format!("Reconnecting in {}s...", delay.as_secs()));
                                 tui.draw(|frame| render(&app, frame))?;
                                 std::thread::sleep(delay);
@@ -169,12 +169,12 @@ pub fn attach() -> AppResult<()> {
                     }
                 }
                 ClientError::Timeout => {
-                    // daemon alive but slow — not a death; log and keep polling
+                    // daemon alive but slow: not a death; log and keep polling
                     tracing::warn!("daemon read timed out");
                 }
                 ClientError::Malformed(_) => {
                     // already warn-logged inside the client; newline framing
-                    // resyncs on the next line — no reconnect needed
+                    // resyncs on the next line: no reconnect needed
                 }
             }
         }

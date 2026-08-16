@@ -24,7 +24,7 @@ pub struct Profile {
 struct ProfilesFile {
     /// Index of the profile selected in the TUI at last save.
     /// `#[serde(default)]` keeps files written by older versions (or other
-    /// tools) loadable — a missing field means "profile 0".
+    /// tools) loadable: a missing field means "profile 0".
     #[serde(default)]
     active_profile: usize,
     profiles: Vec<Profile>,
@@ -47,7 +47,7 @@ impl Default for ProfilesFile {
 }
 
 /// Loads profiles from an explicit path. Infallible from the caller's view:
-/// any read/parse problem degrades to defaults, but loudly — the user must
+/// any read/parse problem degrades to defaults, but loudly: the user must
 /// never be silently told their data is gone.
 ///
 /// Returns `(profiles, active_profile)`.
@@ -55,21 +55,21 @@ fn load_from(path: &std::path::Path) -> (Vec<Profile>, usize) {
     let contents = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            // First run: create defaults. If THAT fails, say so — the user
+            // First run: create defaults. If THAT fails, say so: the user
             // will wonder why their edits don't stick.
             let defaults = ProfilesFile::default();
             if let Err(e) = save_raw(&defaults, path) {
                 tracing::warn!(
-                    "Cannot create {}: {e} — changes won't persist",
+                    "Cannot create {}: {e}: changes won't persist",
                     path.display()
                 );
             }
             return (defaults.profiles, 0);
         }
         Err(e) => {
-            // Permission denied etc. Do NOT overwrite — just run in-memory.
+            // Permission denied etc. Do NOT overwrite: just run in-memory.
             tracing::warn!(
-                "Cannot read {}: {e} — using in-memory defaults",
+                "Cannot read {}: {e}: using in-memory defaults",
                 path.display()
             );
             let defaults = ProfilesFile::default();
@@ -99,11 +99,11 @@ fn load_from(path: &std::path::Path) -> (Vec<Profile>, usize) {
             // Preserve the evidence before starting fresh.
             let backup = path.with_extension("toml.bak");
             tracing::warn!(
-                "Corrupt profiles file {}: {e} — backed up to {}",
+                "Corrupt profiles file {}: {e}: backed up to {}",
                 path.display(),
                 backup.display()
             );
-            // Best-effort rename — the warn! above already told the user.
+            // Best-effort rename: the warn! above already told the user.
             let _ = std::fs::rename(path, &backup);
             let defaults = ProfilesFile::default();
             if let Err(e) = save_raw(&defaults, path) {
@@ -172,12 +172,12 @@ fn save_raw(pf: &ProfilesFile, path: &std::path::Path) -> std::io::Result<()> {
         std::fs::create_dir_all(parent)?;
     }
 
-    // Serialization failure is a REAL error — never substitute a placeholder.
+    // Serialization failure is a REAL error: never substitute a placeholder.
     let contents = toml::to_string_pretty(pf)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
     // Atomic replace: write a sibling temp file, flush to disk, then rename.
-    // rename() within one filesystem is atomic — readers see old or new,
+    // rename() within one filesystem is atomic: readers see old or new,
     // never a truncated file.
     let tmp = path.with_extension("toml.tmp");
     {

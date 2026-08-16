@@ -66,7 +66,7 @@ pub struct App {
     pub filter_node_id: Option<u32>,
     pub filter_state: FilterState,
     pub null_sink: NullSinkState,
-    /// True when null-audio-sink creation failed — the filter runs
+    /// True when null-audio-sink creation failed: the filter runs
     /// but processes silence because no audio source is wired.
     pub null_sink_missing: bool,
     /// False when `pw-link -I` failed and the source state is unknown.
@@ -102,7 +102,7 @@ impl App {
     pub fn new(client: DaemonClient) -> Self {
         let (profiles, active) = profiles::load();
         // Clamp: a hand-edited file (or a profile removed between sessions)
-        // must not panic — fall back to the nearest valid index.
+        // must not panic: fall back to the nearest valid index.
         let active = active.min(profiles.len().saturating_sub(1));
         let (bands, preamp) = if let Some(p) = profiles.get(active) {
             (p.bands.clone(), p.preamp)
@@ -146,7 +146,7 @@ impl App {
     fn client(&mut self) -> &mut DaemonClient {
         self.client
             .as_mut()
-            .expect("DaemonClient required — not available in unit tests")
+            .expect("DaemonClient required: not available in unit tests")
     }
 
     /// Attempt to reconnect after the daemon disconnected (e.g. `PipeWire`
@@ -384,7 +384,7 @@ impl App {
 
     pub fn toggle_device_connection(&mut self, id: u32) -> AppResult<()> {
         if self.filter_node_id.is_none() {
-            self.notify("Filter not ready — wait for PipeWire connection");
+            self.notify("Filter not ready: wait for PipeWire connection");
             return Ok(());
         }
         let already = self.is_device_connected(id) || self.pending_devices.contains(&id);
@@ -540,7 +540,7 @@ mod tests {
         app.switch_profile(-1);
         assert_eq!(app.active_profile, 0);
         // Verify profile 1 was NOT updated when switching away
-        // (auto-save on switch was removed — only explicit :w saves)
+        // (auto-save on switch was removed: only explicit :w saves)
         assert_eq!(app.profiles[1].preamp, 0.0);
     }
 

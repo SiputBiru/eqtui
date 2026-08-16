@@ -12,7 +12,7 @@
 //! The daemon connects to the *real* `PipeWire` session via `PIPEWIRE_RUNTIME_DIR`
 //! (passed through from the test process). If no `PipeWire` daemon is reachable
 //! the spawned daemon exits during startup, so these tests skip loudly instead
-//! of failing — CI runners typically have no `PipeWire` service.
+//! of failing: CI runners typically have no `PipeWire` service.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
@@ -44,7 +44,7 @@ impl Drop for TestDaemon {
 /// letting it reach the ambient `PipeWire` session through `PIPEWIRE_RUNTIME_DIR`.
 ///
 /// Returns `None` (with an explanation on stderr) if the daemon exits before
-/// its socket appears — i.e. no `PipeWire` session available.
+/// its socket appears: i.e. no `PipeWire` session available.
 fn spawn_daemon() -> Option<TestDaemon> {
     let dir = tempfile::tempdir().expect("tempdir creation should succeed");
     // tempfile makes 0700 dirs, but enforce to be robust against umask changes:
@@ -88,7 +88,7 @@ fn spawn_daemon() -> Option<TestDaemon> {
         if let Ok(Some(status)) = child.try_wait() {
             eprintln!(
                 "SKIP: daemon exited during startup with {status} \
-                 (no PipeWire session?) — skipping integration test"
+                 (no PipeWire session?): skipping integration test"
             );
             return None;
         }
@@ -97,7 +97,7 @@ fn spawn_daemon() -> Option<TestDaemon> {
 
     let _ = child.kill();
     let _ = child.wait();
-    eprintln!("SKIP: daemon socket did not appear within 5s — skipping integration test");
+    eprintln!("SKIP: daemon socket did not appear within 5s: skipping integration test");
     None
 }
 
@@ -172,7 +172,7 @@ fn oversized_line_is_rejected_and_connection_closed() {
     let Some(d) = spawn_daemon() else { return };
 
     let (mut stream, mut reader) = connect(&d.socket);
-    // 128 KiB of spaces + newline — beyond the 64 KiB limit.
+    // 128 KiB of spaces + newline: beyond the 64 KiB limit.
     let huge = format!("{} \n", " ".repeat(MAX_REQUEST_LINE * 2));
     stream
         .write_all(huge.as_bytes())
@@ -206,7 +206,7 @@ fn oversized_line_is_rejected_and_connection_closed() {
 
     // ...then closes the connection (newline framing cannot be resynced).
     // Depending on kernel timing the close shows up as clean EOF (Ok(0)) or
-    // ConnectionReset (104) — either way the connection is gone.
+    // ConnectionReset (104): either way the connection is gone.
     let mut rest = String::new();
     let n = reader.read_to_string(&mut rest);
     match n {
@@ -219,7 +219,7 @@ fn oversized_line_is_rejected_and_connection_closed() {
         Ok(n) => panic!("expected no data after the rejection, got {n} bytes: {rest}"),
     }
 
-    // A fresh client still works — the daemon is alive.
+    // A fresh client still works: the daemon is alive.
     assert!(ok_of(&send_raw(&d.socket, r#"{"cmd":"GetStatus"}"#)));
 }
 

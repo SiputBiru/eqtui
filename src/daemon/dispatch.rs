@@ -126,7 +126,7 @@ pub(super) fn dispatch_request(
                 .send(PwCommand::ConnectDevice { filter_id, node_id })
                 .is_err()
             {
-                // pw thread is gone — roll back and say so.
+                // pw thread is gone: roll back and say so.
                 state
                     .status
                     .lock()
@@ -219,7 +219,7 @@ mod tests {
 
     use crate::pipeline::{Pipeline, SAMPLE_RATE};
 
-    /// A connect is pending until the `LinkResult` confirms it — state never
+    /// A connect is pending until the `LinkResult` confirms it: state never
     /// claims "connected" before a link actually exists.
     #[test]
     fn connect_is_pending_until_confirmed() {
@@ -267,7 +267,7 @@ mod tests {
     }
 
     /// Disconnect of a device that is neither connected nor pending is an
-    /// error — no pointless pw-link -d.
+    /// error: no pointless pw-link -d.
     #[test]
     fn disconnect_requires_connection() {
         let (cmd_tx, cmd_rx) = pipewire::channel::channel::<PwCommand>();

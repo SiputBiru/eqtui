@@ -10,7 +10,7 @@
 //! The daemon connects to the *real* `PipeWire` session via
 //! `PIPEWIRE_RUNTIME_DIR` (passed through from the test process). If no
 //! `PipeWire` daemon is reachable the spawned daemon exits during startup, so
-//! these tests skip loudly instead of failing — CI runners typically have no
+//! these tests skip loudly instead of failing: CI runners typically have no
 //! `PipeWire` service.
 
 use std::io::{BufRead, BufReader, Write};
@@ -40,7 +40,7 @@ impl Drop for TestDaemon {
 /// letting it reach the ambient `PipeWire` session through `PIPEWIRE_RUNTIME_DIR`.
 ///
 /// Returns `None` (with an explanation on stderr) if the daemon exits before
-/// its socket appears — i.e. no `PipeWire` session available.
+/// its socket appears: i.e. no `PipeWire` session available.
 fn spawn_daemon() -> Option<TestDaemon> {
     let dir = tempfile::tempdir().expect("tempdir creation should succeed");
     // tempfile makes 0700 dirs, but enforce to be robust against umask changes:
@@ -84,7 +84,7 @@ fn spawn_daemon() -> Option<TestDaemon> {
         if let Ok(Some(status)) = child.try_wait() {
             eprintln!(
                 "SKIP: daemon exited during startup with {status} \
-                 (no PipeWire session?) — skipping integration test"
+                 (no PipeWire session?): skipping integration test"
             );
             return None;
         }
@@ -93,7 +93,7 @@ fn spawn_daemon() -> Option<TestDaemon> {
 
     let _ = child.kill();
     let _ = child.wait();
-    eprintln!("SKIP: daemon socket did not appear within 5s — skipping integration test");
+    eprintln!("SKIP: daemon socket did not appear within 5s: skipping integration test");
     None
 }
 

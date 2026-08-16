@@ -6,7 +6,7 @@ use std::mem;
 use std::os::raw::c_char;
 use std::ptr;
 
-// Thin helpers for pw_properties — PipeWire copies strings internally, so
+// Thin helpers for pw_properties: PipeWire copies strings internally, so
 // CString temporaries are safe to drop after each call.
 pub(crate) struct Props(*mut pipewire_sys::pw_properties);
 

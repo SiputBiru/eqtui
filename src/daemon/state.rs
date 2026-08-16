@@ -38,7 +38,7 @@ pub(super) struct StatusSnapshot {
 pub struct DaemonState {
     pub pipeline: Arc<Pipeline>,
 
-    // One lock for the whole status snapshot — atomic reads and writes.
+    // One lock for the whole status snapshot: atomic reads and writes.
     pub(super) status: Mutex<StatusSnapshot>,
 
     // Not part of the status snapshot; operational only. Lock order rule:
@@ -124,7 +124,7 @@ impl DaemonState {
                 });
 
                 if matches!(state, FilterState::Error(_)) {
-                    warn!("PipeWire connection lost — shutting down for restart");
+                    warn!("PipeWire connection lost: shutting down for restart");
                     self.shutting_down.store(true, Ordering::Release);
                     if let Ok(path) = socket_path() {
                         let _ = UnixStream::connect(&path);
@@ -159,7 +159,7 @@ impl DaemonState {
                 self.push_event(PushEvent::SourceUnknown);
             }
             PwEvent::NullSinkError(msg) => {
-                error!(%msg, "Null sink creation failed — filter will process silence");
+                error!(%msg, "Null sink creation failed: filter will process silence");
                 self.push_event(PushEvent::NullSinkMissing);
                 self.push_event(PushEvent::Error {
                     message: msg.clone(),
@@ -194,7 +194,7 @@ impl DaemonState {
                         s.connected_devices.retain(|id| *id != *device_id);
                     }
                     (false, false) => {
-                        // Link may still exist — keep the state truthful.
+                        // Link may still exist: keep the state truthful.
                         drop(s);
                         self.push_event(PushEvent::Error {
                             message: format!("Failed to unlink device {device_id}"),
@@ -273,7 +273,7 @@ mod tests {
     use super::*;
 
     /// A profile apply (bands + preamp changed under ONE lock) is observed
-    /// atomically by any reader — there is no interleaving that yields the
+    /// atomically by any reader: there is no interleaving that yields the
     /// new bands with the old preamp.
     #[test]
     fn status_snapshot_is_internally_consistent() {
