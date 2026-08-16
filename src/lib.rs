@@ -18,4 +18,4 @@ pub mod pw;
 pub mod state;
 pub mod tui;
 
-pub type AppResult<T> = color_eyre::Result<T>;
+pub type AppResult<T> = eyre::Result<T>;

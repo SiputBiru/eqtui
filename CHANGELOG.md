@@ -4,6 +4,26 @@ All notable changes to eqtui are documented here.
 
 ---
 
+## [Unreleased]
+
+### Dependencies — shrink the release binary
+
+- **Replace `color-eyre` with `eyre`** (`track-caller`) — drops the
+  `backtrace`/`gimli`/`object` DWARF-symbolization stack, `color-spantrace`, and
+  `owo-colors` from the binary. Error output is now monochrome (no runtime
+  backtrace dump); errors still propagate through `AppResult` unchanged.
+- **Trim ratatui default features** to `crossterm_0_29` + `layout-cache` —
+  removes the `all-widgets` → calendar → `time` dependency chain and the unused
+  `serde`/`macros`/`underline-color` features.
+- **Drop crossterm's `event-stream` feature** (kept `events`) — the event loop
+  uses `event::poll`/`read`, not the `EventStream` futures API; removes
+  `futures-core`.
+- **Trim tui-input to the crossterm backend** (`default-features = false`) — the
+  ratatui input widget is not used.
+- Release binary: **2.04 MiB → 1.79 MiB** (about −12%).
+
+---
+
 ## [0.1.3] — 2026-08-11
 
 ### Daemon — harden IPC authorization
