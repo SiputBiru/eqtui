@@ -65,7 +65,7 @@ pub fn render_monitoring(app: &App, frame: &mut Frame, area: Rect) {
             Span::raw("State: "),
             match &app.filter_state {
                 crate::state::FilterState::Error(_) => Span::styled(
-                    "ERROR — PipeWire disconnected, restart daemon",
+                    "ERROR: PipeWire disconnected, restart daemon",
                     Style::default().fg(Color::Red).bold(),
                 ),
                 other => Span::styled(other.to_string(), Style::default().fg(state_color).bold()),
@@ -91,7 +91,7 @@ pub fn render_monitoring(app: &App, frame: &mut Frame, area: Rect) {
                 )
             } else if app.null_sink_missing {
                 Span::styled(
-                    "FAILED — no audio source",
+                    "FAILED: no audio source",
                     Style::default().fg(Color::Red).bold(),
                 )
             } else {

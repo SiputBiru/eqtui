@@ -17,6 +17,28 @@ All notable changes to eqtui are documented here.
 - Refactored the profile-apply logic into a shared helper used by both attach
   and reconnect, so the two paths can't drift.
 
+### Dependencies - shrink the release binary
+
+- **Replace `color-eyre` with `eyre`** (`track-caller`): drops the
+  `backtrace`/`gimli`/`object` DWARF-symbolization stack, `color-spantrace`, and
+  `owo-colors` from the binary. Error output is now monochrome (no runtime
+  backtrace dump); errors still propagate through `AppResult` unchanged.
+- **Trim ratatui default features** to `crossterm_0_29` + `layout-cache`:
+  removes the `all-widgets` → calendar → `time` dependency chain and the unused
+  `serde`/`macros`/`underline-color` features.
+- **Drop crossterm's `event-stream` feature** (kept `events`): the event loop
+  uses `event::poll`/`read`, not the `EventStream` futures API; removes
+  `futures-core`.
+- **Trim tui-input to the crossterm backend** (`default-features = false`): the
+  ratatui input widget is not used.
+- **Drop `tracing-subscriber`'s `ansi` feature** (`nu-ansi-term`): daemon/CLI
+  stderr logs are now monochrome; the TUI log file was already `with_ansi(false)`.
+- **Enable `panic = "abort"` in the release profile**: removes the unwind
+  tables; any panic now terminates the whole process (previously only the
+  panicking thread died, the rest of the daemon kept running). The TUI's
+  terminal-reset panic hook still runs before abort.
+- Release binary: **2.04 MiB → 1.64 MiB** (about −20%).
+
 ---
 
 ## [0.1.3] - 2026-08-11

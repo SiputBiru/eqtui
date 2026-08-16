@@ -20,7 +20,7 @@ use super::props::Props;
 
 const DEFAULT_CHANNELS: u32 = 2;
 
-// Shared by process_cb — kept pub(crate) so tests can check the expected buffer size.
+// Shared by process_cb: kept pub(crate) so tests can check the expected buffer size.
 pub(crate) const DEFAULT_N_SAMPLES: u32 = 1024;
 
 // Used when setting node.name / CString in create_eq_filter.

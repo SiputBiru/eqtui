@@ -113,7 +113,7 @@ pub fn run(
     let null_sink_id_cell: Rc<Cell<Option<u32>>> = Rc::new(Cell::new(None));
     let ns_id_atomic: Arc<AtomicU32> = Arc::new(AtomicU32::new(0));
 
-    // Timer callback — runs on PW mainloop. Node list is cheap (clone a Vec).
+    // Timer callback: runs on PW mainloop. Node list is cheap (clone a Vec).
     // The null-sink input check is offloaded to a dedicated thread to avoid
     // blocking the audio thread with a fork/exec of pw-link -I.
     let ns_timer = null_sink_id_cell.clone();
@@ -128,7 +128,7 @@ pub fn run(
     });
     timer.update_timer(Some(Duration::from_millis(500)), None);
 
-    // Dedicated thread — runs pw-link -I off the PipeWire mainloop so the
+    // Dedicated thread: runs pw-link -I off the PipeWire mainloop so the
     // audio thread is never blocked by fork/exec/waitpid.
     let ns_checker_tx = tx.clone();
     let ns_checker = ns_id_atomic.clone();
@@ -138,7 +138,7 @@ pub fn run(
         .spawn(move || {
             loop {
                 std::thread::sleep(Duration::from_millis(500));
-                // Re-check AFTER the sleep, BEFORE any fork/exec of pw-link —
+                // Re-check AFTER the sleep, BEFORE any fork/exec of pw-link:
                 // never spawn pw-link against objects being torn down.
                 if ns_shutdown.load(Ordering::Acquire) {
                     break;
@@ -163,7 +163,7 @@ pub fn run(
     let core_raw = core.as_raw_ptr().cast::<pipewire_sys::pw_core>();
     // Rc (not a raw pointer to a stack local): `bound_cb` fills this in LATER,
     // on the mainloop, while the `Terminate` command closure reads it. Both
-    // must observe the SAME cell — a moved-by-value Cell would give the
+    // must observe the SAME cell: a moved-by-value Cell would give the
     // Terminate closure a private copy that never sees the filter handle,
     // leaking the filter (and its PwEvent sender) on shutdown.
     let filter_cell: Rc<Cell<Option<FilterHandle>>> = Rc::new(Cell::new(None));
@@ -231,7 +231,7 @@ pub fn run(
             } else {
                 remove_device_output_links(filter_id, device_id)
             };
-            // If this send fails the daemon is shutting down — nothing to
+            // If this send fails the daemon is shutting down: nothing to
             // report to.
             let _ = link_result_tx.send(PwEvent::LinkResult {
                 device_id,
@@ -241,7 +241,7 @@ pub fn run(
         }
     });
 
-    let cmd_filter_cell = filter_cell.clone(); // same Rc — Terminate sees bound_cb's handle
+    let cmd_filter_cell = filter_cell.clone(); // same Rc: Terminate sees bound_cb's handle
     let cmd_receiver = rx.attach(mainloop.loop_(), move |cmd| match cmd {
         PwCommand::Terminate => {
             if let Some(handle) = cmd_filter_cell.take() {
@@ -283,7 +283,7 @@ pub fn run(
 
     mainloop.run();
 
-    // Mainloop has quit — stop the checker, then join it BEFORE tearing down.
+    // Mainloop has quit: stop the checker, then join it BEFORE tearing down.
     // (Runs after Terminate: filter/nullsink destroy() already freed their
     // boxed listener data, each of which held a `tx` clone.)
     shutdown.store(true, Ordering::Release);

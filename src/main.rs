@@ -6,7 +6,6 @@ fn main() -> eqtui::AppResult<()> {
     let mode = args.get(1).map_or("attach", std::string::String::as_str);
 
     eqtui::logging::init(mode)?;
-    color_eyre::install()?;
 
     eqtui::cli::dispatch(mode, &args)
 }

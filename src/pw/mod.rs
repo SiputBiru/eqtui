@@ -1,7 +1,7 @@
 // Copyright (C) 2026 SiputBiru <radityamahatma23@gmail.com>
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! `PipeWire` integration — audio graph setup, DSP filter, and link management.
+//! `PipeWire` integration: audio graph setup, DSP filter, and link management.
 //!
 //! # Architecture
 //!

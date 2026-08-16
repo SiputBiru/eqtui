@@ -131,7 +131,7 @@ pub enum PwEvent {
     NullSinkInputState {
         has_source: bool,
     },
-    /// Sent when `pw-link -I` failed — the null-sink input state
+    /// Sent when `pw-link -I` failed: the null-sink input state
     /// could not be determined (e.g. binary missing, `PipeWire` down).
     NullSinkInputUnknown,
     NullSinkError(String),

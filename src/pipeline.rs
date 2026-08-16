@@ -77,7 +77,7 @@ impl Pipeline {
 
         // Only update the meters from buffers that contained finite samples:
         // a source feeding NaN/∞ must not clobber the last good reading.
-        // Lock-free — scalar comparisons only, no atomics beyond the stores.
+        // Lock-free: scalar comparisons only, no atomics beyond the stores.
         if saw_finite_l {
             self.peak_l.store(max_l.to_bits(), Ordering::Release);
         }

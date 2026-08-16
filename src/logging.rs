@@ -1,7 +1,7 @@
 // Copyright (C) 2026 SiputBiru <radityamahatma23@gmail.com>
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! Logging initialisation — routes tracing output based on the run mode.
+//! Logging initialisation: routes tracing output based on the run mode.
 //!
 //! - **Daemon / CLI** (`daemon`, `stop`, `restart`, `load`): \
 //!   Writes to **stderr** with ANSI colours.  When the daemon is spawned by the

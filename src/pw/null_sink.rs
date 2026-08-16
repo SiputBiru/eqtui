@@ -31,7 +31,7 @@ pub(crate) struct NullSinkListenerData {
     pub(crate) filter_created: Cell<bool>,
 }
 
-// NullSinkHandle — holds the null-audio-sink proxy and all listener
+// NullSinkHandle: holds the null-audio-sink proxy and all listener
 // resources created via pw_proxy_add_listener. Must be destroyed on the
 // PipeWire mainloop thread before the core is disconnected.
 pub(crate) struct NullSinkHandle {
@@ -71,7 +71,7 @@ impl NullSinkHandle {
     }
 }
 
-// Proxy listener callback — fires when the null-sink proxy is bound to a
+// Proxy listener callback: fires when the null-sink proxy is bound to a
 // server-side global id. Enables learning the null sink's real node id
 // so the equalizer filter can be wired to it.
 //
@@ -119,7 +119,7 @@ pub(crate) fn create_null_sink(
     core_raw: *mut pipewire_sys::pw_core,
     tx: &mpsc::Sender<PwEvent>,
 ) -> Option<NullSinkHandle> {
-    // Build properties for the adapter factory — these determine the
+    // Build properties for the adapter factory: these determine the
     // node's identity and behaviour in the PipeWire graph.
     let props = Props::new("factory.name", "support.null-audio-sink");
     props.set("media.class", "Audio/Sink");
@@ -146,7 +146,7 @@ pub(crate) fn create_null_sink(
     // Safety: core_raw is a valid pointer obtained from a live CoreRc on
     // the PipeWire mainloop thread. pw_core is opaque in the bindings
     // but its C layout begins with pw_proxy, which begins with
-    // spa_interface — the cast is therefore sound.
+    // spa_interface: the cast is therefore sound.
     // All CString pointers remain live for the duration of the FFI call.
     // props.into_raw() transfers ownership of the pw_properties into
     // pw_core_create_object (PipeWire copies the dict internally).

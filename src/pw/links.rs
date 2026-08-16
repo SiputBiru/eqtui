@@ -90,7 +90,7 @@ pub(crate) fn check_null_sink_input_source(null_sink_id: u32) -> Option<bool> {
     let output = match Command::new("pw-link").arg("-I").output() {
         Ok(o) => o,
         Err(e) => {
-            tracing::warn!(%e, "pw-link -I failed — cannot check null sink input source");
+            tracing::warn!(%e, "pw-link -I failed: cannot check null sink input source");
             return None;
         }
     };

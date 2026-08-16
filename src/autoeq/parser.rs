@@ -107,7 +107,7 @@ fn parse_filter_line(trimmed: &str) -> Result<EqBand, String> {
         .parse()
         .map_err(|_| format!("invalid Q '{}'", parts[8]))?;
 
-    // NaN parses fine from "NaN" — finite + range checks are mandatory.
+    // NaN parses fine from "NaN": finite + range checks are mandatory.
     if !frequency.is_finite() || !(MIN_FREQ_HZ..=MAX_FREQ_HZ).contains(&frequency) {
         return Err(format!("frequency {frequency} Hz out of range"));
     }
@@ -137,7 +137,7 @@ pub fn parse_peq_str(input: &str) -> Result<PeqPreset, PeqError> {
             continue;
         }
 
-        // Parse "Preamp: <val> dB" — invalid preamp stays a hard error (it
+        // Parse "Preamp: <val> dB": invalid preamp stays a hard error (it
         // silently shifts EVERYTHING, unlike one bad filter line).
         if let Some(val) = trimmed.strip_prefix("Preamp:") {
             let val = val.trim();
@@ -271,7 +271,7 @@ Filter 4: ON XYZ Fc 400 Hz Gain 1.0 dB Q 1.0
 
     #[test]
     fn nan_and_missing_units_are_rejected() {
-        // "NaN" parses as f32 — must be caught by is_finite, not parse failure:
+        // "NaN" parses as f32: must be caught by is_finite, not parse failure:
         let input = "Filter 1: ON PK Fc NaN Hz Gain 1.0 dB Q 1.0\n";
         let err = parse_peq_str(input).unwrap_err(); // zero bands → NoFilters
         assert!(matches!(err, PeqError::NoFilters));

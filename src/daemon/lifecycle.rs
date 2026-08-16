@@ -34,10 +34,10 @@ use super::transport::handle_client;
 /// daemon's PID before it discovers it failed to get the lock.
 ///
 /// Returns the locked, PID-written file handle. The caller must keep it alive
-/// for as long as the daemon runs — dropping it releases the flock and a
+/// for as long as the daemon runs: dropping it releases the flock and a
 /// second daemon could start.
 fn acquire_lock(path: &Path) -> AppResult<fs::File> {
-    // Open WITHOUT truncating — a second instance must not destroy
+    // Open WITHOUT truncating: a second instance must not destroy
     // the running daemon's metadata before it owns the lock.
     let mut lock_file = std::fs::OpenOptions::new()
         .create(true)
@@ -58,7 +58,7 @@ fn acquire_lock(path: &Path) -> AppResult<fs::File> {
         std::process::exit(1);
     }
 
-    // We hold the lock — NOW it's safe to replace the metadata.
+    // We hold the lock: NOW it's safe to replace the metadata.
     lock_file.set_len(0)?; // truncate while holding the lock
     lock_file.seek(std::io::SeekFrom::Start(0))?;
     writeln!(&lock_file, "{}", std::process::id())?;
@@ -83,12 +83,12 @@ pub fn run_daemon() -> AppResult<()> {
         .recursive(true)
         .mode(0o700)
         .create(&eqtui_dir)?;
-    // create() doesn't tighten perms on an existing dir — enforce:
+    // create() doesn't tighten perms on an existing dir: enforce:
     fs::set_permissions(&eqtui_dir, fs::Permissions::from_mode(0o700))?;
 
     // Acquire exclusive lock so only one daemon instance runs.
     let lock_path = lock_path()?;
-    // NOTE: `lock_file` must stay alive for the whole function — dropping it
+    // NOTE: `lock_file` must stay alive for the whole function: dropping it
     // releases the flock and a second daemon could start.
     let _lock_file = acquire_lock(&lock_path)?;
 
@@ -99,14 +99,14 @@ pub fn run_daemon() -> AppResult<()> {
     let (pw_tx, pw_rx) = mpsc::channel::<PwEvent>();
     let (cmd_tx, cmd_rx) = channel::channel::<PwCommand>();
 
-    // PipeWire mainloop thread — audio processing and graph management.
+    // PipeWire mainloop thread: audio processing and graph management.
     let pw_pipeline = pipeline.clone();
     let pw_shutdown = state.shutting_down.clone(); // Arc<AtomicBool>, shared
     let pw_thread = thread::Builder::new().name("pw".into()).spawn(move || {
         pw::run(pw_tx, cmd_rx, pw_pipeline, pw_shutdown);
     })?;
 
-    // Bridge thread — forwards PwEvents from PipeWire to the shared state.
+    // Bridge thread: forwards PwEvents from PipeWire to the shared state.
     let bridge_state = state.clone();
     let bridge_socket = socket_path.clone();
     let bridge = thread::Builder::new()
@@ -116,7 +116,7 @@ pub fn run_daemon() -> AppResult<()> {
                 bridge_state.handle_pw_event(event);
             }
             if !bridge_state.shutting_down.load(Ordering::Acquire) {
-                error!("PW event channel closed unexpectedly — shutting down daemon");
+                error!("PW event channel closed unexpectedly: shutting down daemon");
                 bridge_state.shutting_down.store(true, Ordering::Release);
                 if let Err(e) = std::os::unix::net::UnixStream::connect(&bridge_socket) {
                     debug!(%e, "Failed to connect to socket to unblock accept loop");
@@ -124,7 +124,7 @@ pub fn run_daemon() -> AppResult<()> {
             }
         })?;
 
-    // Peak broadcast thread — pushes peak meter updates at ~15 fps.
+    // Peak broadcast thread: pushes peak meter updates at ~15 fps.
     let peak_state = state.clone();
     let peak = thread::Builder::new()
         .name("peak-broadcast".into())
@@ -139,7 +139,7 @@ pub fn run_daemon() -> AppResult<()> {
             }
         })?;
 
-    // Remove a stale socket from a previous crashed run — but ONLY if it
+    // Remove a stale socket from a previous crashed run: but ONLY if it
     // really is a socket. Never unlink a regular file or symlink planted at
     // the socket path.
     match fs::symlink_metadata(&socket_path) {
@@ -159,7 +159,7 @@ pub fn run_daemon() -> AppResult<()> {
     }
 
     let listener = UnixListener::bind(&socket_path)?;
-    // Explicit 0600 regardless of umask — the daemon is the enforcer.
+    // Explicit 0600 regardless of umask: the daemon is the enforcer.
     fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
     info!("Daemon listening on {}", socket_path.display());
 
@@ -206,7 +206,7 @@ pub fn run_daemon() -> AppResult<()> {
     info!("Daemon shutting down");
 
     // 1. Tell PipeWire to quit: mainloop returns, pw::run cancels + joins its
-    //    checker, joins the link worker, then returns — dropping the last
+    //    checker, joins the link worker, then returns: dropping the last
     //    PwEvent senders. Then join the pw thread.
     let _ = cmd_tx.send(PwCommand::Terminate);
     if let Err(e) = pw_thread.join() {
@@ -214,7 +214,7 @@ pub fn run_daemon() -> AppResult<()> {
     }
 
     // 2. Bridge: its pw_rx.recv() errors once all senders are gone; it sees
-    //    shutting_down and returns quietly. Cannot hang — every sender drops
+    //    shutting_down and returns quietly. Cannot hang: every sender drops
     //    before pw_thread.join() returns (see load-bearing destroy() frees).
     if let Err(e) = bridge.join() {
         error!("pw-bridge panicked: {e:?}");
@@ -226,7 +226,7 @@ pub fn run_daemon() -> AppResult<()> {
     }
 
     // 4. Clients: close every stream so blocked read_until calls error out,
-    //    then join the handlers. Drain first — holding the clients lock across
+    //    then join the handlers. Drain first: holding the clients lock across
     //    shutdown() would block handlers trying to unregister.
     let drained: Vec<ClientHandle> = state.clients.lock().unwrap().drain(..).collect();
     for c in drained {
@@ -255,7 +255,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("eqtui.lock");
 
-        // Act — first instance holds the lock and has written its PID.
+        // Act: first instance holds the lock and has written its PID.
         let _first = acquire_lock(&path).unwrap();
         let first_pid = std::fs::read_to_string(&path).unwrap();
         // Sanity: the PID recorded is our own process.
@@ -272,7 +272,7 @@ mod tests {
         let rc = unsafe { libc::flock(second.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
         assert_eq!(rc, -1);
 
-        // Assert — the first instance's PID survived B's attempt.
+        // Assert: the first instance's PID survived B's attempt.
         assert_eq!(std::fs::read_to_string(&path).unwrap(), first_pid);
     }
 }

@@ -20,7 +20,7 @@ use crate::state::EqBand;
 pub enum ClientError {
     /// Daemon closed the connection (clean shutdown, crash, or teardown).
     Disconnected,
-    /// The 5 s read/write deadline elapsed — daemon alive but unresponsive.
+    /// The 5 s read/write deadline elapsed: daemon alive but unresponsive.
     Timeout,
     /// A line arrived that is neither `Response` nor `PushEvent`. Carries the
     /// offending text (truncated) for debugging.
@@ -85,7 +85,7 @@ impl DaemonClient {
     ///
     /// Exists so tests can drive the auto-launch / fail-fast paths without
     /// mutating the process environment (which is `unsafe` in edition 2024
-    /// and races parallel tests). Production callers pass `None` and `&[]` —
+    /// and races parallel tests). Production callers pass `None` and `&[]`:
     /// `exe = None` resolves to `current_exe()`.
     fn connect_with_exe(
         path: &Path,
@@ -97,7 +97,7 @@ impl DaemonClient {
             return Ok(client);
         }
 
-        info!("No daemon found — auto-launching");
+        info!("No daemon found: auto-launching");
         let mut daemon_child = spawn_daemon(exe, spawn_env);
 
         let timeout_ms = std::env::var("EQTUI_DAEMON_START_TIMEOUT_MS")
@@ -128,9 +128,9 @@ impl DaemonClient {
         }
 
         if let Some(mut child) = daemon_child {
-            warn!(pid = child.id(), "Daemon start timed out — killing");
-            let _ = child.kill(); // SIGKILL via the handle — NO pid-reuse race
-            let _ = child.wait(); // reap — no zombie
+            warn!(pid = child.id(), "Daemon start timed out: killing");
+            let _ = child.kill(); // SIGKILL via the handle: NO pid-reuse race
+            let _ = child.wait(); // reap: no zombie
         }
 
         Err(std::io::Error::new(
@@ -176,11 +176,11 @@ impl DaemonClient {
             let mut line = String::new();
             let n = self.reader.read_line(&mut line)?; // From<io::Error> classifies
             if n == 0 {
-                return Err(ClientError::Disconnected); // EOF — was "Unexpected data"
+                return Err(ClientError::Disconnected); // EOF: was "Unexpected data"
             }
             let trimmed = line.trim();
 
-            // Try Response first — it has { ok, error, status }.
+            // Try Response first: it has { ok, error, status }.
             if let Ok(resp) = serde_json::from_str::<Response>(trimmed) {
                 return Ok(resp);
             }
@@ -191,14 +191,14 @@ impl DaemonClient {
                 continue;
             }
 
-            // Neither variant matched — likely a protocol error or corrupted data.
+            // Neither variant matched: likely a protocol error or corrupted data.
             return Err(ClientError::Malformed(truncate(trimmed, 200)));
         }
     }
 
     /// Returns `None` when no push events are available.
     pub fn try_read_event(&mut self) -> Result<Option<PushEvent>, ClientError> {
-        // Reap an auto-launched daemon that has exited (cheap, non-blocking) —
+        // Reap an auto-launched daemon that has exited (cheap, non-blocking):
         // avoids a <defunct> child lingering until the TUI exits.
         if let Some(child) = &mut self.daemon_child
             && let Ok(Some(_status)) = child.try_wait()
@@ -216,7 +216,7 @@ impl DaemonClient {
         self.reader.get_mut().set_nonblocking(true)?;
         let mut line = String::new();
         let result = match self.reader.read_line(&mut line) {
-            Ok(0) => Err(ClientError::Disconnected), // EOF — daemon hung up
+            Ok(0) => Err(ClientError::Disconnected), // EOF: daemon hung up
             Ok(_) => match serde_json::from_str::<PushEvent>(line.trim()) {
                 Ok(event) => Ok(Some(event)),
                 // A stray Response or other non-PushEvent data arrived.
@@ -304,7 +304,7 @@ fn spawn_daemon(exe: Option<&Path>, spawn_env: &[(&str, &str)]) -> Option<std::p
     } else if let Ok(e) = std::env::current_exe() {
         e
     } else {
-        warn!("Cannot determine own binary path — daemon auto-launch disabled");
+        warn!("Cannot determine own binary path: daemon auto-launch disabled");
         return None;
     };
 
@@ -332,13 +332,13 @@ mod tests {
     use super::*;
 
     /// The fail-fast path: when the spawned daemon dies during startup,
-    /// `connect_with_exe` must return quickly naming the exit status — not
+    /// `connect_with_exe` must return quickly naming the exit status: not
     /// after the full blind timeout.
     ///
     /// Uses `/bin/true` as a stand-in daemon: it exits instantly with status
     /// 0. This avoids relying on `current_exe()` (which under a lib unit test
     /// points at the test harness, not the real binary) and needs no
-    /// `PipeWire` session — so it runs deterministically in CI.
+    /// `PipeWire` session: so it runs deterministically in CI.
     #[test]
     fn connect_fails_fast_when_daemon_exits_immediately() {
         let dir = tempfile::tempdir().unwrap();
