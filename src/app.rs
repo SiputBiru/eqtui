@@ -158,6 +158,19 @@ impl App {
         self.full_sync()?;
 
         // Restore the active profile to the new daemon.
+        self.apply_active_profile()?;
+
+        // Device links were destroyed with the old PipeWire graph.
+        // The TUI shows them as disconnected; the user reconnects manually.
+        self.connected_devices.clear();
+
+        Ok(())
+    }
+
+    /// Apply the active profile's bands + preamp locally AND push them to the
+    /// daemon. Called on attach (after `full_sync`, which otherwise leaves the
+    /// daemon's empty state in charge) and on reconnect.
+    pub(crate) fn apply_active_profile(&mut self) -> AppResult<()> {
         if let Some(p) = self.profiles.get(self.active_profile) {
             self.eq.bands.clone_from(&p.bands);
             self.preamp = p.preamp;
@@ -168,11 +181,6 @@ impl App {
         self.client().set_bands(&bands)?;
         self.client().set_preamp(preamp)?;
         self.client().set_bypass(bypass)?;
-
-        // Device links were destroyed with the old PipeWire graph.
-        // The TUI shows them as disconnected; the user reconnects manually.
-        self.connected_devices.clear();
-
         Ok(())
     }
 
@@ -534,5 +542,46 @@ mod tests {
         // Verify profile 1 was NOT updated when switching away
         // (auto-save on switch was removed — only explicit :w saves)
         assert_eq!(app.profiles[1].preamp, 0.0);
+    }
+
+    /// Applying the active profile pushes `SetBands` + `SetPreamp` (+
+    /// `SetBypass`) to the daemon and restores the local EQ display.
+    #[test]
+    fn apply_active_profile_pushes_bands_to_daemon() {
+        use crate::client::DaemonClient;
+        use std::io::{BufRead, BufReader, Write};
+
+        let (client_stream, daemon_stream) = std::os::unix::net::UnixStream::pair().unwrap();
+        let mut app = App::new_test();
+        app.client = Some(DaemonClient::from_stream(client_stream).unwrap());
+        app.profiles[0].bands = vec![crate::state::EqBand {
+            frequency: 100.0,
+            gain: 3.0,
+            q: 1.0,
+            filter_type: crate::state::FilterType::Peak,
+        }];
+        app.profiles[0].preamp = -6.0;
+
+        // The daemon side: reply to each request so the client's synchronous
+        // request() loop can complete.
+        let mut daemon = daemon_stream;
+        let handle = std::thread::spawn(move || {
+            let mut reader = BufReader::new(daemon.try_clone().unwrap());
+            let mut line = String::new();
+            for _ in 0..3 {
+                line.clear();
+                reader.read_line(&mut line).unwrap();
+                daemon.write_all(b"{\"ok\":true}\n").unwrap();
+            }
+        });
+
+        app.apply_active_profile().unwrap();
+
+        // The client-side frames that were sent: the daemon thread read them
+        // and replied; the helper returned without error, which is the core
+        // assertion (no timeout = all three requests were answered).
+        assert_eq!(app.eq.bands.len(), 1);
+        assert!((app.preamp - (-6.0)).abs() < f32::EPSILON);
+        handle.join().unwrap();
     }
 }
