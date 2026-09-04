@@ -24,16 +24,16 @@ crossterm = { version = "0.29", default-features = false, features = ["events"] 
 dirs = "6"
 eyre = { version = "0.6.14", features = ["track-caller"] }
 libc = "0.2.189"
-libspa-sys = "0.10.0"
-pipewire = "0.10.0"
-pipewire-sys = "0.10.0"
+libspa-sys = "0.10.1"
+pipewire = "0.10.1"
+pipewire-sys = "0.10.1"
 ratatui = { version = "0.30", default-features = false, features = [
   "crossterm_0_29",
   "layout-cache",
 ] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
-toml = "1.1.4"
+toml = "1.1.5"
 tracing = "0.1.44"
 tracing-error = "0.2.1"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = [
